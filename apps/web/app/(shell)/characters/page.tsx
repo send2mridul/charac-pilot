@@ -56,8 +56,10 @@ export default function CharactersPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editErr, setEditErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const [avatarUploading, setAvatarUploading] = useState<string | null>(null);
   const [avatarTargetId, setAvatarTargetId] = useState<string | null>(null);
+  const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -161,6 +163,33 @@ export default function CharactersPage() {
       setAvatarUploading(null);
       setAvatarTargetId(null);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function playCurrentVoice(character: CharacterDto) {
+    if (!character.default_voice_id) return;
+    setPreviewingVoiceId(character.id);
+    try {
+      const text =
+        character.sample_texts.find((line) => line.trim()) ||
+        `Hello, this is ${character.name}.`;
+      const preview = await api.generatePreview(character.id, {
+        text,
+        voice_id: character.default_voice_id,
+        save_clip: false,
+      });
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+      }
+      const audio = new Audio(
+        mediaUrl(preview.audio_url.replace(/^\/media\//, "")),
+      );
+      previewAudioRef.current = audio;
+      await audio.play();
+    } catch {
+      /* ignore transient play errors */
+    } finally {
+      setPreviewingVoiceId(null);
     }
   }
 
@@ -475,6 +504,20 @@ export default function CharactersPage() {
                       </p>
                     )}
                     <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        className="text-xs"
+                        disabled={!c.default_voice_id || previewingVoiceId === c.id}
+                        onClick={() => void playCurrentVoice(c)}
+                      >
+                        {previewingVoiceId === c.id ? (
+                          <Spinner className="h-3.5 w-3.5 border-t-text" />
+                        ) : (
+                          <Volume2 className="h-3.5 w-3.5" />
+                        )}
+                        Play voice
+                      </Button>
                       <Link
                         href={`/voice-studio?character=${encodeURIComponent(c.id)}`}
                         className={buttonClass(

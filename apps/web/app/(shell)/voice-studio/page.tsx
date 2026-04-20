@@ -114,6 +114,8 @@ function VoiceStudioContent() {
   const [batchLinesInput, setBatchLinesInput] = useState("");
   const [batchPromptInput, setBatchPromptInput] = useState("");
   const [batchCount, setBatchCount] = useState(5);
+  const [editingVoice, setEditingVoice] = useState(false);
+  const [showClipGenerator, setShowClipGenerator] = useState(true);
 
   useEffect(() => {
     const q = searchParams.get("character");
@@ -262,6 +264,13 @@ function VoiceStudioContent() {
     setPreview(null);
     setPreviewError(null);
     setSaveSuccess(false);
+    if (c.default_voice_id) {
+      setEditingVoice(false);
+      setShowClipGenerator(true);
+    } else {
+      setEditingVoice(true);
+      setShowClipGenerator(false);
+    }
   }, [selectedId, characters]);
 
   async function handleAssignVoice() {
@@ -291,8 +300,8 @@ function VoiceStudioContent() {
 
   async function handleGenerate() {
     if (!selected || !sampleText.trim()) return;
-    if (!selected.default_voice_id && !chosenVoiceId) {
-      setPreviewError("Assign a voice first, or pick one in Browse.");
+    if (!selected.default_voice_id) {
+      setPreviewError("Assign a voice first in Voice setup.");
       return;
     }
     setGenerating(true);
@@ -301,7 +310,7 @@ function VoiceStudioContent() {
     try {
       const result = await api.generatePreview(selected.id, {
         text: sampleText.trim(),
-        voice_id: chosenVoiceId || undefined,
+        voice_id: selected.default_voice_id || undefined,
         style: styleInput || undefined,
         save_clip: true,
         clip_title: clipLabel.trim() || undefined,
@@ -320,7 +329,7 @@ function VoiceStudioContent() {
 
   async function handleBatchGenerate() {
     if (!selected) return;
-    if (!selected.default_voice_id && !chosenVoiceId) {
+    if (!selected.default_voice_id) {
       setPreviewError("Assign a voice first in Voice Setup.");
       return;
     }
@@ -336,14 +345,14 @@ function VoiceStudioContent() {
             count: Math.max(1, Math.min(12, batchCount || 1)),
             style: styleInput.trim() || undefined,
             clip_label_prefix: clipLabel.trim() || undefined,
-            voice_id: chosenVoiceId || undefined,
+            voice_id: selected.default_voice_id || undefined,
           }
         : {
             mode: "multi_line" as const,
             lines,
             style: styleInput.trim() || undefined,
             clip_label_prefix: clipLabel.trim() || undefined,
-            voice_id: chosenVoiceId || undefined,
+            voice_id: selected.default_voice_id || undefined,
           };
     setGenerating(true);
     setPreview(null);
@@ -629,6 +638,89 @@ function VoiceStudioContent() {
               )}
             </ul>
           </Panel>
+
+          <Panel>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Library className="h-4 w-4 text-muted" />
+                <h3 className="text-sm font-semibold text-text">
+                  Character Audio Library
+                </h3>
+              </div>
+              {selected && clips.length > 0 ? (
+                <a
+                  href={api.characterClipsZipUrl(selected.id)}
+                  className="inline-flex items-center gap-1 rounded-lg bg-white/[0.06] px-2.5 py-1 text-xs font-medium text-text ring-1 ring-white/[0.1] transition hover:bg-white/[0.1]"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download all
+                </a>
+              ) : null}
+            </div>
+            <p className="mt-1 text-xs text-muted">
+              {selected
+                ? `Clips for ${selected.name}`
+                : "Select a character to view clips"}
+            </p>
+            {!selected ? (
+              <p className="mt-3 text-xs text-muted">No character selected.</p>
+            ) : clipsLoading ? (
+              <p className="mt-3 text-xs text-muted">Loading clips…</p>
+            ) : clips.length === 0 ? (
+              <p className="mt-3 text-xs text-muted">
+                No clips yet. Use Generate clips on the right.
+              </p>
+            ) : (
+              <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto rounded-lg p-2 ring-1 ring-white/[0.06]">
+                {clips.map((cl) => (
+                  <li
+                    key={cl.id}
+                    className="rounded-lg bg-white/[0.02] p-2 ring-1 ring-white/[0.05] transition hover:bg-white/[0.04]"
+                  >
+                    <input
+                      key={`${cl.id}-${cl.title}`}
+                      className="mb-1 w-full rounded border border-white/[0.08] bg-canvas/80 px-2 py-1 text-xs text-text outline-none focus:border-accent/40"
+                      defaultValue={cl.title}
+                      disabled={clipBusyId === cl.id}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (v && v !== cl.title) void handleRenameClip(cl, v);
+                      }}
+                    />
+                    <p className="line-clamp-2 text-[11px] text-muted">{cl.text}</p>
+                    {cl.tone_style_hint ? (
+                      <p className="mt-1 text-[10px] text-muted">
+                        Tone: {cl.tone_style_hint}
+                      </p>
+                    ) : null}
+                    <audio
+                      controls
+                      className="mt-1 h-9 w-full"
+                      src={mediaUrl(cl.audio_url.replace(/^\/media\//, ""))}
+                    />
+                    <div className="mt-1 flex flex-wrap gap-3">
+                      <a
+                        href={mediaUrl(cl.audio_url.replace(/^\/media\//, ""))}
+                        download
+                        className="text-[11px] font-medium text-accent hover:underline"
+                      >
+                        Download
+                      </a>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-red-400/90 hover:underline disabled:opacity-50"
+                        disabled={clipBusyId === cl.id}
+                        onClick={() => void handleDeleteClip(cl.id)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
           </div>
 
           <Panel>
@@ -641,10 +733,10 @@ function VoiceStudioContent() {
                 </p>
               </div>
             ) : (
-              <div className="flex flex-col gap-6">
-                <div className="order-1">
+              <div className="space-y-5">
+                <div className="rounded-xl bg-white/[0.03] p-4 ring-1 ring-white/[0.08]">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                    Section 1: Character and assigned voice
+                    Character summary
                   </p>
                   <div className="mt-2 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
@@ -661,58 +753,78 @@ function VoiceStudioContent() {
                           </span>
                         </div>
                       )}
-                      <h2 className="text-lg font-semibold text-text">
-                        {selected.name}
-                      </h2>
+                      <div>
+                        <h2 className="text-lg font-semibold text-text">
+                          {selected.name}
+                        </h2>
+                        <p className="text-xs text-muted">
+                          {selected.source_speaker_labels.length > 0
+                            ? "Imported from video"
+                            : "Manual character"}
+                        </p>
+                      </div>
                     </div>
                     {selected.is_narrator ? (
                       <Badge tone="violet">Narrator</Badge>
                     ) : null}
                   </div>
-                  <p className="mt-1 text-xs text-muted">
-                    {selected.source_speaker_labels.join(", ") || "Manual entry"}{" "}
-                    · {selected.segment_count} segments
-                  </p>
-                  {selected.voice_display_name || selected.default_voice_id ? (
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
-                      <span>Current voice:</span>
-                      <span className="font-medium text-text">
-                        {selected.voice_display_name ||
-                          selected.default_voice_id}
-                      </span>
-                      {selected.voice_source_type ? (
-                        <Badge tone="accent">
-                          {selected.voice_source_type === "catalog"
-                            ? "Catalog"
-                            : selected.voice_source_type === "designed"
-                              ? "Designed"
-                              : selected.voice_source_type === "remixed"
-                                ? "Remixed"
-                                : selected.voice_source_type}
-                        </Badge>
-                      ) : null}
-                      {selected.voice_provider ? (
-                        <span className="text-muted">
-                          ({selected.voice_provider})
+                  {selected.default_voice_id ? (
+                    <div className="mt-3 rounded-lg bg-emerald-500/10 px-3 py-2 ring-1 ring-emerald-400/20">
+                      <p className="text-xs text-muted">Assigned voice</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                        <span className="font-medium text-text">
+                          {selected.voice_display_name || selected.default_voice_id}
                         </span>
-                      ) : null}
+                        {selected.voice_source_type ? (
+                          <Badge tone="accent">
+                            {selected.voice_source_type === "catalog"
+                              ? "Catalog"
+                              : selected.voice_source_type === "designed"
+                                ? "Designed"
+                                : selected.voice_source_type === "remixed"
+                                  ? "Remixed"
+                                  : selected.voice_source_type}
+                          </Badge>
+                        ) : null}
+                      </div>
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="mt-3 rounded-lg bg-amber-500/10 px-3 py-2 ring-1 ring-amber-500/25">
+                      <p className="text-xs text-amber-100/90">
+                        No assigned voice yet. Set up a voice first.
+                      </p>
+                    </div>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() => setEditingVoice(true)}
+                    >
+                      Change voice
+                    </Button>
+                    <Button
+                      onClick={() => setShowClipGenerator((v) => !v)}
+                      disabled={!selected.default_voice_id}
+                    >
+                      {showClipGenerator ? "Hide clip generator" : "Generate clips"}
+                    </Button>
+                    {editingVoice ? (
+                      <Button
+                        variant="ghost"
+                        onClick={() => setEditingVoice(false)}
+                      >
+                        Cancel voice editing
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
 
-                {!selected.default_voice_id ? (
-                  <div className="order-1 rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-100/90 ring-1 ring-amber-500/25">
-                    No voice on this character yet. Use{" "}
-                    <span className="font-medium text-text">Browse</span> below to
-                    pick one, or use Design.
-                  </div>
-                ) : null}
-
-                <div className="order-3 space-y-3 rounded-xl bg-white/[0.03] p-4 ring-1 ring-white/[0.08] transition hover:ring-white/12">
+                {showClipGenerator ? (
+                  <div className="space-y-3 rounded-xl bg-white/[0.03] p-4 ring-1 ring-white/[0.08] transition hover:ring-white/12">
                   <div className="flex items-center gap-2">
                     <Play className="h-4 w-4 text-accent" />
                     <h3 className="text-sm font-semibold text-text">
-                      Section 3: Generate audio clips
+                      Generate clips
                     </h3>
                   </div>
                   <p className="text-xs leading-relaxed text-muted">
@@ -839,7 +951,7 @@ function VoiceStudioContent() {
                         (batchInputMode === "multi_line"
                           ? !batchLinesInput.trim()
                           : !batchPromptInput.trim())) ||
-                      (!selected.default_voice_id && !chosenVoiceId)
+                      !selected.default_voice_id
                     }
                     className="w-full"
                   >
@@ -902,95 +1014,15 @@ function VoiceStudioContent() {
                     </div>
                   ) : null}
                 </div>
+                ) : null}
 
-                <div className="order-4 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Library className="h-4 w-4 text-muted" />
-                      <h3 className="text-sm font-semibold text-text">
-                        Audio Library
-                      </h3>
-                    </div>
-                    {clips.length > 0 ? (
-                      <a
-                        href={api.characterClipsZipUrl(selected.id)}
-                        className="inline-flex items-center gap-1 rounded-lg bg-white/[0.06] px-2.5 py-1 text-xs font-medium text-text ring-1 ring-white/[0.1] transition hover:bg-white/[0.1]"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        Download all
-                      </a>
-                    ) : null}
-                  </div>
-                  {clipsLoading ? (
-                    <p className="text-xs text-muted">Loading clips…</p>
-                  ) : clips.length === 0 ? (
-                    <p className="text-xs text-muted">
-                      Generated clips appear here for this character.
-                    </p>
-                  ) : (
-                    <ul className="max-h-56 space-y-2 overflow-y-auto rounded-lg p-2 ring-1 ring-white/[0.06]">
-                      {clips.map((cl) => (
-                        <li
-                          key={cl.id}
-                          className="rounded-lg bg-white/[0.02] p-2 ring-1 ring-white/[0.05] transition hover:bg-white/[0.04]"
-                        >
-                          <input
-                            key={`${cl.id}-${cl.title}`}
-                            className="mb-1 w-full rounded border border-white/[0.08] bg-canvas/80 px-2 py-1 text-xs text-text outline-none focus:border-accent/40"
-                            defaultValue={cl.title}
-                            disabled={clipBusyId === cl.id}
-                            onBlur={(e) => {
-                              const v = e.target.value.trim();
-                              if (v && v !== cl.title)
-                                void handleRenameClip(cl, v);
-                            }}
-                          />
-                          <p className="line-clamp-2 text-[11px] text-muted">
-                            {cl.text}
-                          </p>
-                          {cl.tone_style_hint ? (
-                            <p className="mt-1 text-[10px] text-muted">
-                              Tone: {cl.tone_style_hint}
-                            </p>
-                          ) : null}
-                          <p className="mt-1 text-[10px] text-muted">
-                            Created: {new Date(cl.created_at).toLocaleString()}
-                          </p>
-                          <audio
-                            controls
-                            className="mt-1 h-9 w-full"
-                            src={mediaUrl(cl.audio_url.replace(/^\/media\//, ""))}
-                          />
-                          <div className="mt-1 flex flex-wrap gap-3">
-                            <a
-                              href={mediaUrl(cl.audio_url.replace(/^\/media\//, ""))}
-                              download
-                              className="text-[11px] font-medium text-accent hover:underline"
-                            >
-                              Download
-                            </a>
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 text-[11px] font-medium text-red-400/90 hover:underline disabled:opacity-50"
-                              disabled={clipBusyId === cl.id}
-                              onClick={() => void handleDeleteClip(cl.id)}
-                            >
-                              <Trash2 className="h-3 w-3" />
-                              Delete
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-
-                <div className="order-2 space-y-3">
+                {editingVoice ? (
+                <div className="space-y-3">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                    Section 2: Voice setup
+                    Voice setup
                   </p>
                   <p className="text-xs text-muted">
-                    Voice setup creates or assigns this character voice. Clip generation is in Section 3.
+                    Choose, design, or remix this character voice.
                   </p>
                   <div className="flex flex-wrap gap-2 border-b border-white/[0.08] pb-3">
                   {(
@@ -1448,6 +1480,7 @@ function VoiceStudioContent() {
                   </div>
                 ) : null}
                 </div>
+                ) : null}
               </div>
             )}
           </Panel>

@@ -25,13 +25,13 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="relative flex h-full w-64 shrink-0 flex-col border-r border-white/[0.08] bg-panel/90 backdrop-blur-md before:pointer-events-none before:absolute before:inset-y-8 before:left-0 before:w-px before:bg-gradient-to-b before:from-transparent before:via-accent/50 before:to-transparent">
-      <div className="flex items-center gap-2 border-b border-white/[0.06] px-5 py-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-accent/30 to-violet/30 ring-1 ring-white/10">
-          <Sparkles className="h-4 w-4 text-accent" aria-hidden />
+    <aside className="relative flex h-full w-64 shrink-0 flex-col border-r border-border bg-panel">
+      <div className="flex h-14 items-center gap-2.5 border-b border-border px-5">
+        <div className="flex size-7 items-center justify-center rounded-md bg-text text-canvas">
+          <Sparkles className="h-3.5 w-3.5" aria-hidden />
         </div>
         <div className="leading-tight">
-          <p className="text-sm font-semibold tracking-tight text-text">
+          <p className="text-[13.5px] font-semibold tracking-tight text-text">
             {APP_BRAND}
           </p>
           <p className="text-[11px] text-muted">Cast your voices</p>
@@ -39,7 +39,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
-        <p className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-widest text-muted/80">
+        <p className="px-2 pb-2 text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted/70">
           Workflow
         </p>
         <ul className="space-y-0.5">
@@ -54,32 +54,30 @@ export function Sidebar() {
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className={`group relative flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
+                  className={`group relative flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-[13px] font-medium transition ${
                     active
-                      ? "bg-white/[0.07] text-text ring-1 ring-white/10 before:absolute before:left-0 before:top-1/2 before:h-8 before:w-1 before:-translate-y-1/2 before:rounded-full before:bg-accent before:shadow-[0_0_16px_rgba(94,234,212,0.45)]"
-                      : "text-muted hover:bg-white/[0.04] hover:text-text"
+                      ? "border-border bg-panel-elevated text-text shadow-[0_1px_2px_rgba(17,24,39,0.08)]"
+                      : "border-transparent text-muted hover:border-border hover:bg-panel-elevated hover:text-text"
                   }`}
                 >
                   <span
-                    className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                    className={`flex h-7 w-7 items-center justify-center rounded-md ${
                       active
                         ? "bg-accent-dim text-accent"
-                        : "bg-white/[0.04] text-muted group-hover:text-text"
+                        : "bg-panel-elevated text-muted group-hover:text-text"
                     }`}
                   >
                     <Icon className="h-4 w-4" aria-hidden />
                   </span>
                   <span className="flex-1 font-medium">{item.label}</span>
-                  {active ? (
-                    <ChevronRight className="h-4 w-4 text-accent/80" />
-                  ) : null}
+                  {active ? <ChevronRight className="h-4 w-4 text-accent/80" /> : null}
                 </Link>
               </li>
             );
           })}
         </ul>
 
-        <p className="mt-6 px-2 pb-2 text-[11px] font-semibold uppercase tracking-widest text-muted/80">
+        <p className="mt-6 px-2 pb-2 text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted/70">
           Helpers
         </p>
         <ul className="space-y-0.5">
@@ -91,10 +89,10 @@ export function Sidebar() {
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className={`group flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[13px] transition ${
+                  className={`group flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-[12.5px] transition ${
                     active
-                      ? "bg-white/[0.06] text-text"
-                      : "text-muted/90 hover:bg-white/[0.04] hover:text-text"
+                      ? "border-border bg-panel-elevated text-text"
+                      : "border-transparent text-muted hover:border-border hover:bg-panel-elevated hover:text-text"
                   }`}
                 >
                   <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
@@ -115,7 +113,7 @@ export function Sidebar() {
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className="group flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[12px] text-muted/80 transition hover:bg-white/[0.03] hover:text-muted"
+                  className="group flex items-center gap-2.5 rounded-lg border border-transparent px-2.5 py-1.5 text-[12px] text-muted/80 transition hover:border-border hover:bg-panel-elevated hover:text-muted"
                 >
                   <Icon className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
                   <span className="flex-1 leading-snug">{item.label}</span>
@@ -125,7 +123,7 @@ export function Sidebar() {
           })}
         </ul>
 
-        <p className="mt-6 px-2 pb-2 text-[11px] font-semibold uppercase tracking-widest text-muted/80">
+        <p className="mt-6 px-2 pb-2 text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted/70">
           Projects
         </p>
         {loading ? (
@@ -148,17 +146,17 @@ export function Sidebar() {
                   <Link
                     href={href}
                     onClick={() => setActiveProjectId(p.id)}
-                    className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
+                    className={`flex items-center gap-3 rounded-lg border px-2.5 py-2 text-sm transition ${
                       active
-                        ? "bg-white/[0.07] text-text ring-1 ring-white/10"
-                        : "text-muted hover:bg-white/[0.04] hover:text-text"
+                        ? "border-border bg-panel-elevated text-text"
+                        : "border-transparent text-muted hover:border-border hover:bg-panel-elevated hover:text-text"
                     }`}
                   >
                     <span
-                      className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                      className={`flex h-8 w-8 items-center justify-center rounded-md ${
                         isContext
                           ? "bg-violet-dim text-violet"
-                          : "bg-white/[0.04] text-muted"
+                          : "bg-panel-elevated text-muted"
                       }`}
                     >
                       <FolderKanban className="h-4 w-4" aria-hidden />
@@ -173,7 +171,7 @@ export function Sidebar() {
         )}
       </nav>
 
-      <div className="border-t border-white/[0.06] p-4">
+      <div className="border-t border-border p-4">
         <PanelMini />
       </div>
     </aside>
@@ -182,7 +180,7 @@ export function Sidebar() {
 
 function BadgePill({ children }: { children: string }) {
   return (
-    <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted ring-1 ring-white/10">
+    <span className="rounded-full bg-panel-elevated px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted ring-1 ring-border">
       {children}
     </span>
   );
@@ -190,7 +188,7 @@ function BadgePill({ children }: { children: string }) {
 
 function PanelMini() {
   return (
-    <div className="rounded-xl bg-gradient-to-br from-panel-elevated to-panel p-3 ring-1 ring-white/10">
+    <div className="rounded-xl border border-border bg-panel-elevated p-3">
       <p className="text-xs font-medium text-text">Local workspace</p>
       <p className="mt-1 text-[11px] leading-relaxed text-muted">
         Projects and media stay on this machine. Keep the API running to use

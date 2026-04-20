@@ -1,18 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --canvas: #07080d;
-  --panel: #0f1017;
-  --panel-elevated: #14151f;
-  --border: rgba(255, 255, 255, 0.08);
-  --muted: #8b8fa3;
-  --text: #e8e9ef;
-  --accent: #5eead4;
-  --accent-dim: rgba(94, 234, 212, 0.14);
-  --violet: #a78bfa;
-  --violet-dim: rgba(167, 139, 250, 0.14);
-  --danger: #fb7185;
-  --warning: #fbbf24;
+  --canvas: #f8fafc;
+  --panel: #ffffff;
+  --panel-elevated: #f8fafc;
+  --border: #e5e7eb;
+  --muted: #6b7280;
+  --text: #111827;
+  --accent: #0f766e;
+  --accent-dim: rgba(15, 118, 110, 0.12);
+  --violet: #6366f1;
+  --violet-dim: rgba(99, 102, 241, 0.12);
+  --danger: #dc2626;
+  --warning: #d97706;
 }
 
 @theme inline {
@@ -36,12 +36,18 @@ body {
   background: var(--canvas);
   color: var(--text);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .cp-grid-bg {
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    linear-gradient(rgba(17, 24, 39, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(17, 24, 39, 0.03) 1px, transparent 1px);
   background-size: 48px 48px;
   mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black, transparent);
+}
+
+* {
+  border-color: var(--border);
 }

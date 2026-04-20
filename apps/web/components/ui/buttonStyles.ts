@@ -1,15 +1,15 @@
 export const buttonVariants = {
   primary:
-    "bg-accent text-canvas hover:bg-teal-300 shadow-[0_0_24px_-8px_rgba(94,234,212,0.7)]",
+    "bg-accent text-white shadow-[0_1px_0_0_rgba(255,255,255,0.2)_inset,0_1px_2px_rgba(17,24,39,0.18)] hover:opacity-95",
   secondary:
-    "bg-panel-elevated text-text ring-1 ring-white/10 hover:bg-white/[0.06]",
-  ghost: "text-muted hover:text-text hover:bg-white/[0.05]",
-  outline: "ring-1 ring-white/15 text-text hover:bg-white/[0.04]",
+    "bg-panel text-text ring-1 ring-border shadow-[0_1px_2px_rgba(17,24,39,0.08)] hover:bg-panel-elevated",
+  ghost: "text-muted hover:text-text hover:bg-slate-100",
+  outline: "ring-1 ring-border text-text bg-panel hover:bg-slate-50",
 } as const;
 
 export function buttonClass(
   variant: keyof typeof buttonVariants,
   className = "",
 ) {
-  return `inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition ${buttonVariants[variant]} ${className}`;
+  return `inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-[13px] font-medium transition ${buttonVariants[variant]} ${className}`;
 }
