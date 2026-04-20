@@ -41,7 +41,21 @@ export type VoiceCatalogItem = {
   voice_id: string;
   display_name: string;
   description: string;
+  category?: string | null;
+  tags: string[];
   suggested_use: string;
+};
+
+export type VoiceCatalogSource = "elevenlabs" | "local_fallback";
+
+export type VoiceCatalogResponse = {
+  voices: VoiceCatalogItem[];
+  source: VoiceCatalogSource;
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+  message: string | null;
 };
 
 export type PreviewDto = {

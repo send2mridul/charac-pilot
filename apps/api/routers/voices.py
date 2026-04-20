@@ -1,52 +1,59 @@
-"""Voice catalog endpoint — built-in stock voices for MVP."""
+"""Voice catalog — ElevenLabs when configured, else local fallback."""
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from __future__ import annotations
+
+import logging
+
+from fastapi import APIRouter, Query
+
+from schemas.voice_catalog import VoiceCatalogItem, VoiceCatalogResponse
+from services.voice_catalog import get_voice_pool, paginate_voices, search_voices
 
 router = APIRouter()
+log = logging.getLogger("characpilot.voices")
 
 
-class VoiceCatalogItem(BaseModel):
-    voice_id: str
-    display_name: str
-    description: str
-    suggested_use: str
+def _to_items(raw: list[dict]) -> list[VoiceCatalogItem]:
+    return [VoiceCatalogItem(**v) for v in raw]
 
 
-VOICE_CATALOG: list[VoiceCatalogItem] = [
-    VoiceCatalogItem(
-        voice_id="warm_female",
-        display_name="Warm Female",
-        description="Smooth and warm alto voice with natural cadence.",
-        suggested_use="Female leads, narrators, gentle characters",
-    ),
-    VoiceCatalogItem(
-        voice_id="young_male",
-        display_name="Young Male",
-        description="Energetic young male tenor, slightly casual.",
-        suggested_use="Male leads, supporting cast, dialogue-heavy roles",
-    ),
-    VoiceCatalogItem(
-        voice_id="narrator_deep",
-        display_name="Narrator Deep",
-        description="Deep, authoritative baritone with measured pacing.",
-        suggested_use="Narrators, intros, voiceover, documentary",
-    ),
-    VoiceCatalogItem(
-        voice_id="cute_child",
-        display_name="Cute Child",
-        description="Light, bright child voice with playful energy.",
-        suggested_use="Child characters, playful sidekicks",
-    ),
-    VoiceCatalogItem(
-        voice_id="villain_dark",
-        display_name="Villain Dark",
-        description="Low, menacing voice with slow deliberate pacing.",
-        suggested_use="Antagonists, mysterious figures, dark narration",
-    ),
-]
+@router.get("/catalog", response_model=VoiceCatalogResponse)
+def get_voice_catalog(
+    page: int = Query(1, ge=1, description="1-based page"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
+):
+    """List voices from ElevenLabs when `ELEVENLABS_API_KEY` is set; otherwise built-in catalog."""
+    pool, source, msg = get_voice_pool()
+    slice_rows, total = paginate_voices(pool, page, page_size)
+    has_more = page * page_size < total
+    return VoiceCatalogResponse(
+        voices=_to_items(slice_rows),
+        source=source,
+        total=total,
+        page=page,
+        page_size=page_size,
+        has_more=has_more,
+        message=msg,
+    )
 
 
-@router.get("/catalog", response_model=list[VoiceCatalogItem])
-def get_voice_catalog():
-    return VOICE_CATALOG
+@router.get("/catalog/search", response_model=VoiceCatalogResponse)
+def search_voice_catalog(
+    q: str = Query("", description="Filter by name, tags, description"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """Search/filter the same voice pool as `/catalog` (name, tags, category, description)."""
+    pool, source, msg = get_voice_pool()
+    filtered = search_voices(pool, q)
+    slice_rows, total = paginate_voices(filtered, page, page_size)
+    has_more = page * page_size < total
+    return VoiceCatalogResponse(
+        voices=_to_items(slice_rows),
+        source=source,
+        total=total,
+        page=page,
+        page_size=page_size,
+        has_more=has_more,
+        message=msg,
+    )

@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Mic2, Play, Volume2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Mic2, Play, Search, Volume2 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { mediaUrl } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
-import type { CharacterDto, PreviewDto, VoiceCatalogItem } from "@/lib/api/types";
+import type {
+  CharacterDto,
+  PreviewDto,
+  VoiceCatalogResponse,
+} from "@/lib/api/types";
 import { useProjects } from "@/components/providers/ProjectProvider";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -19,9 +23,15 @@ import { Spinner } from "@/components/ui/Spinner";
 export default function VoiceStudioPage() {
   const { activeProjectId } = useProjects();
   const [characters, setCharacters] = useState<CharacterDto[]>([]);
-  const [catalog, setCatalog] = useState<VoiceCatalogItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [voiceHub, setVoiceHub] = useState<VoiceCatalogResponse | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [loadMoreLoading, setLoadMoreLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [voiceSearchInput, setVoiceSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [chosenVoiceId, setChosenVoiceId] = useState<string>("");
@@ -33,30 +43,96 @@ export default function VoiceStudioPage() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const loadData = useCallback(async () => {
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(voiceSearchInput.trim()), 320);
+    return () => clearTimeout(t);
+  }, [voiceSearchInput]);
+
+  useEffect(() => {
     if (!activeProjectId) {
       setCharacters([]);
       return;
     }
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    try {
-      const [chars, voices] = await Promise.all([
-        api.listCharacters(activeProjectId),
-        api.listVoiceCatalog(),
-      ]);
-      setCharacters(chars);
-      setCatalog(voices);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load data");
-    } finally {
-      setLoading(false);
-    }
+    api
+      .listCharacters(activeProjectId)
+      .then((rows) => {
+        if (!cancelled) setCharacters(rows);
+      })
+      .catch((e) => {
+        if (!cancelled)
+          setError(e instanceof ApiError ? e.message : "Failed to load characters");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [activeProjectId]);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    if (!activeProjectId) {
+      setVoiceHub(null);
+      return;
+    }
+    let cancelled = false;
+    setCatalogLoading(true);
+    setCatalogError(null);
+    const req =
+      debouncedSearch.length > 0
+        ? api.searchVoiceCatalog({
+            q: debouncedSearch,
+            page: 1,
+            page_size: 100,
+          })
+        : api.listVoiceCatalog({ page: 1, page_size: 100 });
+    req
+      .then((res) => {
+        if (!cancelled) setVoiceHub(res);
+      })
+      .catch((e) => {
+        if (!cancelled)
+          setCatalogError(
+            e instanceof ApiError ? e.message : "Failed to load voices",
+          );
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, debouncedSearch]);
+
+  async function handleLoadMoreVoices() {
+    if (!voiceHub?.has_more || loadMoreLoading) return;
+    const nextPage = voiceHub.page + 1;
+    setLoadMoreLoading(true);
+    setCatalogError(null);
+    try {
+      const res =
+        debouncedSearch.length > 0
+          ? await api.searchVoiceCatalog({
+              q: debouncedSearch,
+              page: nextPage,
+              page_size: 100,
+            })
+          : await api.listVoiceCatalog({ page: nextPage, page_size: 100 });
+      setVoiceHub({
+        ...res,
+        voices: [...voiceHub.voices, ...res.voices],
+      });
+    } catch (e) {
+      setCatalogError(
+        e instanceof ApiError ? e.message : "Failed to load more voices",
+      );
+    } finally {
+      setLoadMoreLoading(false);
+    }
+  }
 
   const selected = characters.find((c) => c.id === selectedId) ?? null;
 
@@ -71,16 +147,17 @@ export default function VoiceStudioPage() {
   }, [selectedId]);
 
   async function handleAssignVoice() {
-    if (!selected || !chosenVoiceId) return;
+    if (!selected || !chosenVoiceId || !voiceHub) return;
     setSaving(true);
     setError(null);
     setSaveSuccess(false);
     try {
-      const catalogItem = catalog.find((v) => v.voice_id === chosenVoiceId);
+      const picked = voiceHub.voices.find((v) => v.voice_id === chosenVoiceId);
       const updated = await api.assignVoice(selected.id, {
         voice_id: chosenVoiceId,
-        provider: "catalog",
-        display_name: catalogItem?.display_name ?? chosenVoiceId,
+        provider:
+          voiceHub.source === "elevenlabs" ? "elevenlabs" : "local_builtin",
+        display_name: picked?.display_name ?? chosenVoiceId,
       });
       setCharacters((prev) =>
         prev.map((c) => (c.id === updated.id ? updated : c)),
@@ -114,6 +191,8 @@ export default function VoiceStudioPage() {
     }
   }
 
+  const rows = voiceHub?.voices ?? [];
+
   return (
     <div className="space-y-10">
       <PageHeader
@@ -139,7 +218,6 @@ export default function VoiceStudioPage() {
         />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[1fr_1.5fr]">
-          {/* Character list */}
           <Panel>
             <h2 className="text-sm font-semibold text-text">
               Characters ({characters.length})
@@ -173,7 +251,8 @@ export default function VoiceStudioPage() {
                       </div>
                     </div>
                     <p className="mt-1 text-xs text-muted">
-                      {c.segment_count} segments · {c.total_speaking_duration.toFixed(1)}s
+                      {c.segment_count} segments ·{" "}
+                      {c.total_speaking_duration.toFixed(1)}s
                     </p>
                   </button>
                 </li>
@@ -181,18 +260,17 @@ export default function VoiceStudioPage() {
             </ul>
           </Panel>
 
-          {/* Voice config + preview */}
           <Panel>
             {!selected ? (
               <div className="flex min-h-[300px] flex-col items-center justify-center text-center">
                 <Volume2 className="h-10 w-10 text-muted" />
                 <p className="mt-4 text-sm text-muted">
-                  Select a character to assign a voice and generate preview speech.
+                  Select a character to assign a voice and generate preview
+                  speech.
                 </p>
               </div>
             ) : (
               <div className="space-y-6">
-                {/* Header */}
                 <div>
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="text-lg font-semibold text-text">
@@ -221,36 +299,142 @@ export default function VoiceStudioPage() {
                   ) : null}
                 </div>
 
-                {/* Voice catalog picker */}
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wide text-muted">
-                    Assign voice
-                  </label>
-                  <select
-                    className="mt-2 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                    value={chosenVoiceId}
-                    onChange={(e) => {
-                      setChosenVoiceId(e.target.value);
-                      setSaveSuccess(false);
-                    }}
-                  >
-                    <option value="">— Select a voice —</option>
-                    {catalog.map((v) => (
-                      <option key={v.voice_id} value={v.voice_id}>
-                        {v.display_name} — {v.suggested_use}
-                      </option>
-                    ))}
-                  </select>
-                  {chosenVoiceId ? (
-                    <p className="mt-1 text-[11px] text-muted">
-                      {catalog.find((v) => v.voice_id === chosenVoiceId)?.description}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="block text-xs font-semibold uppercase tracking-wide text-muted">
+                      Voice library
+                    </label>
+                    {voiceHub ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge
+                          tone={
+                            voiceHub.source === "elevenlabs"
+                              ? "success"
+                              : "default"
+                          }
+                        >
+                          {voiceHub.source === "elevenlabs"
+                            ? "ElevenLabs"
+                            : "Built-in fallback"}
+                        </Badge>
+                        <span className="text-[11px] text-muted">
+                          {voiceHub.total} voices
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                  {voiceHub?.message ? (
+                    <p className="mt-1 text-[11px] text-amber-400/90">
+                      {voiceHub.message}
+                    </p>
+                  ) : null}
+                  {catalogError ? (
+                    <p className="mt-1 text-[11px] text-red-400">
+                      {catalogError}
+                    </p>
+                  ) : null}
+
+                  <div className="relative mt-2">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                    <input
+                      type="search"
+                      className="w-full rounded-lg border border-white/[0.12] bg-canvas/80 py-2 pl-9 pr-3 text-sm text-text outline-none placeholder:text-muted focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                      placeholder="Search by name, tag, or description…"
+                      value={voiceSearchInput}
+                      onChange={(e) => setVoiceSearchInput(e.target.value)}
+                      autoComplete="off"
+                    />
+                  </div>
+                  {catalogLoading ? (
+                    <div className="mt-3 flex items-center gap-2 text-xs text-muted">
+                      <Spinner className="h-4 w-4 border-t-accent" />
+                      Loading voices…
+                    </div>
+                  ) : (
+                    <div className="mt-3 max-h-[280px] space-y-1.5 overflow-y-auto rounded-lg ring-1 ring-white/[0.06]">
+                      {rows.length === 0 ? (
+                        <p className="p-4 text-center text-xs text-muted">
+                          No voices match your search.
+                        </p>
+                      ) : (
+                        rows.map((v) => {
+                          const active = chosenVoiceId === v.voice_id;
+                          return (
+                            <button
+                              key={v.voice_id}
+                              type="button"
+                              className={`flex w-full flex-col gap-1 border-b border-white/[0.04] px-3 py-2.5 text-left text-sm last:border-0 ${
+                                active
+                                  ? "bg-accent/15"
+                                  : "hover:bg-white/[0.03]"
+                              }`}
+                              onClick={() => {
+                                setChosenVoiceId(v.voice_id);
+                                setSaveSuccess(false);
+                              }}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="font-medium text-text">
+                                  {v.display_name}
+                                </span>
+                                {active ? (
+                                  <Badge tone="accent">Selected</Badge>
+                                ) : null}
+                              </div>
+                              {v.tags && v.tags.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {v.tags.slice(0, 6).map((t) => (
+                                    <span
+                                      key={t}
+                                      className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted"
+                                    >
+                                      {t}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {v.description ? (
+                                <p className="line-clamp-2 text-[11px] text-muted">
+                                  {v.description}
+                                </p>
+                              ) : null}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                  {voiceHub?.has_more ? (
+                    <div className="mt-2 flex justify-center">
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        disabled={loadMoreLoading || catalogLoading}
+                        onClick={() => void handleLoadMoreVoices()}
+                      >
+                        {loadMoreLoading ? (
+                          <>
+                            <Spinner className="h-4 w-4 border-t-text" />
+                            Loading…
+                          </>
+                        ) : (
+                          "Load more voices"
+                        )}
+                      </Button>
+                    </div>
+                  ) : null}
+                  {chosenVoiceId && !rows.some((v) => v.voice_id === chosenVoiceId) ? (
+                    <p className="mt-2 text-[11px] text-muted">
+                      Assigned voice id:{" "}
+                      <code className="text-xs">{chosenVoiceId}</code> (scroll or
+                      search if it is not in the current list)
                     </p>
                   ) : null}
                   <div className="mt-3 flex items-center gap-3">
                     <Button
                       variant="secondary"
                       onClick={() => void handleAssignVoice()}
-                      disabled={saving || !chosenVoiceId}
+                      disabled={saving || !chosenVoiceId || !voiceHub}
                     >
                       {saving ? (
                         <Spinner className="h-4 w-4 border-t-text" />
@@ -263,7 +447,6 @@ export default function VoiceStudioPage() {
                   </div>
                 </div>
 
-                {/* Sample text */}
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wide text-muted">
                     Preview line
@@ -277,7 +460,6 @@ export default function VoiceStudioPage() {
                   />
                 </div>
 
-                {/* Tone / style */}
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wide text-muted">
                     Tone / style (optional)
@@ -290,7 +472,6 @@ export default function VoiceStudioPage() {
                   />
                 </div>
 
-                {/* Generate */}
                 <Button
                   onClick={() => void handleGenerate()}
                   disabled={generating || !sampleText.trim()}
@@ -309,12 +490,10 @@ export default function VoiceStudioPage() {
                   )}
                 </Button>
 
-                {/* Preview error */}
                 {previewError ? (
                   <ErrorBanner title="Preview failed" detail={previewError} />
                 ) : null}
 
-                {/* Audio player */}
                 {preview ? (
                   <div className="rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/[0.06]">
                     <div className="flex items-center justify-between gap-3">
@@ -331,7 +510,9 @@ export default function VoiceStudioPage() {
                             : "default"
                         }
                       >
-                        {preview.provider === "stub" ? "fallback" : preview.provider}
+                        {preview.provider === "stub"
+                          ? "fallback"
+                          : preview.provider}
                       </Badge>
                     </div>
                     <p className="mt-2 text-xs italic text-muted">

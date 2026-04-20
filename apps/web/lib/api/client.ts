@@ -11,6 +11,7 @@ import type {
   TranscriptSegmentDto,
   UploadCreateResponse,
   VoiceCatalogItem,
+  VoiceCatalogResponse,
 } from "./types";
 
 export { ApiError } from "./errors";
@@ -165,8 +166,30 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  listVoiceCatalog: () =>
-    requestJson<VoiceCatalogItem[]>("/voices/catalog"),
+  listVoiceCatalog: (params?: { page?: number; page_size?: number }) => {
+    const sp = new URLSearchParams();
+    if (params?.page != null) sp.set("page", String(params.page));
+    if (params?.page_size != null) sp.set("page_size", String(params.page_size));
+    const q = sp.toString();
+    return requestJson<VoiceCatalogResponse>(
+      `/voices/catalog${q ? `?${q}` : ""}`,
+    );
+  },
+
+  searchVoiceCatalog: (params?: {
+    q?: string;
+    page?: number;
+    page_size?: number;
+  }) => {
+    const sp = new URLSearchParams();
+    if (params?.q != null) sp.set("q", params.q);
+    if (params?.page != null) sp.set("page", String(params.page));
+    if (params?.page_size != null) sp.set("page_size", String(params.page_size));
+    const q = sp.toString();
+    return requestJson<VoiceCatalogResponse>(
+      `/voices/catalog/search${q ? `?${q}` : ""}`,
+    );
+  },
 
   assignVoice: (
     characterId: string,
