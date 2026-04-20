@@ -4,6 +4,7 @@ import type {
   CharacterDto,
   EpisodeDto,
   JobDto,
+  PreviewDto,
   ProjectDto,
   SpeakerGroupDto,
   TranscriptDto,
@@ -125,6 +126,43 @@ export const api = {
         body: JSON.stringify(body),
       },
     ),
+
+  createCharacterFromGroup: (
+    episodeId: string,
+    speakerLabel: string,
+    body: { name: string; project_id?: string },
+  ) =>
+    requestJson<CharacterDto>(
+      `/episodes/${episodeId}/speaker-groups/${encodeURIComponent(speakerLabel)}/create-character`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
+  getCharacter: (characterId: string) =>
+    requestJson<CharacterDto>(`/characters/${characterId}`),
+
+  patchCharacter: (
+    characterId: string,
+    body: Partial<Pick<CharacterDto, "name" | "role" | "default_voice_id" | "is_narrator" | "voice_style_presets" | "traits" | "wardrobe_notes">>,
+  ) =>
+    requestJson<CharacterDto>(`/characters/${characterId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  generatePreview: (
+    characterId: string,
+    body: { text: string; voice_id?: string; style?: string },
+  ) =>
+    requestJson<PreviewDto>(`/characters/${characterId}/generate-preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 
   queueVoice: (characterId: string) =>
     requestJson<JobDto>(`/characters/${characterId}/voice`, {

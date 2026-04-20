@@ -3,11 +3,12 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from db.store import store
+from schemas.character import CharacterOut, CreateCharacterFromGroupBody
 from schemas.episode import EpisodeExportBody
 from schemas.job import JobOut
 from schemas.speaker_group import SpeakerGroupOut, SpeakerGroupRenameBody
 from schemas.transcript import TranscriptOut, TranscriptSegmentOut
-from services import episode_service, episode_transcript_service, job_service
+from services import character_service, episode_service, episode_transcript_service, job_service
 
 router = APIRouter()
 log = logging.getLogger("characpilot.episodes")
@@ -102,6 +103,23 @@ def rename_speaker_group(episode_id: str, speaker_label: str, body: SpeakerGroup
         total_speaking_duration=updated.total_speaking_duration,
         sample_texts=updated.sample_texts,
         is_narrator=updated.is_narrator,
+    )
+
+
+@router.post("/{episode_id}/speaker-groups/{speaker_label}/create-character", response_model=CharacterOut)
+def create_character_from_group(episode_id: str, speaker_label: str, body: CreateCharacterFromGroupBody):
+    eid = _episode_id(episode_id)
+    log.info("POST /episodes/%s/speaker-groups/%s/create-character name=%s", eid, speaker_label, body.name)
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    ep = episode_service.get_episode(eid)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    project_id = body.project_id or ep.project_id
+    return character_service.create_character_from_group(
+        episode_id=eid,
+        speaker_label=speaker_label.strip(),
+        name=body.name.strip(),
+        project_id=project_id,
     )
 
 

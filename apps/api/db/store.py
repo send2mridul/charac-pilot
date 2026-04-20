@@ -97,6 +97,15 @@ class CharacterRecord:
     traits: list[str]
     wardrobe_notes: str
     continuity_rules: list[str]
+    source_speaker_labels: list[str] = field(default_factory=list)
+    source_episode_id: str | None = None
+    segment_count: int = 0
+    total_speaking_duration: float = 0.0
+    sample_texts: list[str] = field(default_factory=list)
+    thumbnail_paths: list[str] = field(default_factory=list)
+    is_narrator: bool = False
+    default_voice_id: str | None = None
+    voice_style_presets: dict[str, Any] | None = None
 
 
 @dataclass
@@ -250,6 +259,47 @@ class InMemoryStore:
     def get_character(self, character_id: str) -> CharacterRecord | None:
         with self._lock:
             return self.characters.get(character_id)
+
+    def create_character(self, **fields: Any) -> CharacterRecord:
+        with self._lock:
+            cid = f"chr-{uuid.uuid4().hex[:10]}"
+            rec = CharacterRecord(
+                id=cid,
+                project_id=fields.get("project_id", ""),
+                name=fields.get("name", "Unnamed"),
+                role=fields.get("role", ""),
+                traits=fields.get("traits", []),
+                wardrobe_notes=fields.get("wardrobe_notes", ""),
+                continuity_rules=fields.get("continuity_rules", []),
+                source_speaker_labels=fields.get("source_speaker_labels", []),
+                source_episode_id=fields.get("source_episode_id"),
+                segment_count=fields.get("segment_count", 0),
+                total_speaking_duration=fields.get("total_speaking_duration", 0.0),
+                sample_texts=fields.get("sample_texts", []),
+                thumbnail_paths=fields.get("thumbnail_paths", []),
+                is_narrator=fields.get("is_narrator", False),
+                default_voice_id=fields.get("default_voice_id"),
+                voice_style_presets=fields.get("voice_style_presets"),
+            )
+            self.characters[cid] = rec
+            return rec
+
+    def update_character(self, character_id: str, **fields: Any) -> CharacterRecord | None:
+        with self._lock:
+            c = self.characters.get(character_id)
+            if not c:
+                return None
+            for key, val in fields.items():
+                if hasattr(c, key):
+                    setattr(c, key, val)
+            return c
+
+    def find_character_by_speaker(self, episode_id: str, speaker_label: str) -> CharacterRecord | None:
+        with self._lock:
+            for c in self.characters.values():
+                if c.source_episode_id == episode_id and speaker_label in c.source_speaker_labels:
+                    return c
+        return None
 
     def get_episode(self, episode_id: str) -> EpisodeRecord | None:
         with self._lock:

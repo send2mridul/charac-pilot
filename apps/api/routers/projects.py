@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from schemas.character import CharacterOut
+from schemas.character import CharacterOut, PatchCharacterBody
 from schemas.episode import EpisodeCreateResult, EpisodeOut
 from schemas.project import ProjectCreate, ProjectOut
 from services import character_service, episode_service, job_service, project_service
@@ -94,3 +94,19 @@ def list_characters(project_id: str):
     if not project_service.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return character_service.list_characters(project_id)
+
+
+@router.patch("/{project_id}/characters/{character_id}", response_model=CharacterOut)
+def patch_character(project_id: str, character_id: str, body: PatchCharacterBody):
+    if not project_service.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        c = character_service.get_character(character_id)
+        if not c:
+            raise HTTPException(status_code=404, detail="Character not found")
+        return c
+    updated = character_service.update_character(character_id, **updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return updated

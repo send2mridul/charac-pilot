@@ -7,12 +7,14 @@ import {
   Mic2,
   Pencil,
   UploadCloud,
+  UserPlus,
   Users,
 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { mediaUrl } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
 import type {
+  CharacterDto,
   EpisodeMediaJobResult,
   JobDto,
   MatchCandidateDto,
@@ -110,6 +112,12 @@ export default function UploadMatchPage() {
   );
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [createdChars, setCreatedChars] = useState<Record<string, CharacterDto>>(
+    {},
+  );
+  const [creatingLabel, setCreatingLabel] = useState<string | null>(null);
+  const [charNameInput, setCharNameInput] = useState("");
+  const [charCreateError, setCharCreateError] = useState<string | null>(null);
 
   const pollJob = useCallback(async (jobId: string) => {
     const j = await api.getJob(jobId);
@@ -137,6 +145,8 @@ export default function UploadMatchPage() {
     setTranscriptFetchDone(false);
     setSpeakerGroups([]);
     setSpeakerGroupsError(null);
+    setCreatedChars({});
+    setCharCreateError(null);
     setPhase("uploading");
     setUploadRatio(0);
     try {
@@ -250,6 +260,24 @@ export default function UploadMatchPage() {
         e instanceof ApiError ? e.message : "Update failed",
       );
     }
+  }
+
+  async function handleCreateCharacter(label: string, name: string) {
+    const ep = transcriptEpisodeId;
+    if (!ep || !name.trim()) return;
+    setCharCreateError(null);
+    try {
+      const c = await api.createCharacterFromGroup(ep, label, {
+        name: name.trim(),
+        project_id: activeProjectId || undefined,
+      });
+      setCreatedChars((prev) => ({ ...prev, [label]: c }));
+    } catch (e) {
+      setCharCreateError(
+        e instanceof ApiError ? e.message : "Create character failed",
+      );
+    }
+    setCreatingLabel(null);
   }
 
   const showTranscriptSpinner =
@@ -554,6 +582,14 @@ export default function UploadMatchPage() {
                   />
                 </div>
               ) : null}
+              {charCreateError ? (
+                <div className="mt-3">
+                  <ErrorBanner
+                    title="Character creation error"
+                    detail={charCreateError}
+                  />
+                </div>
+              ) : null}
               {speakerGroupsLoading ? (
                 <div className="mt-4 flex items-center gap-2 text-sm text-muted">
                   <Spinner className="h-4 w-4 border-t-canvas" />
@@ -661,6 +697,66 @@ export default function UploadMatchPage() {
                           ))}
                         </div>
                       ) : null}
+
+                      {createdChars[g.speaker_label] ? (
+                        <div className="mt-3 flex items-center gap-2 rounded-lg bg-accent/10 px-3 py-2">
+                          <CheckCircle2 className="h-4 w-4 text-accent" />
+                          <span className="text-xs font-medium text-text">
+                            Saved as &ldquo;{createdChars[g.speaker_label].name}&rdquo;
+                          </span>
+                          <span className="text-[11px] text-muted">
+                            ({createdChars[g.speaker_label].id})
+                          </span>
+                        </div>
+                      ) : creatingLabel === g.speaker_label ? (
+                        <form
+                          className="mt-3 flex items-center gap-2"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void handleCreateCharacter(
+                              g.speaker_label,
+                              charNameInput,
+                            );
+                          }}
+                        >
+                          <input
+                            className="flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                            placeholder="Character name…"
+                            value={charNameInput}
+                            onChange={(e) => setCharNameInput(e.target.value)}
+                            autoFocus
+                          />
+                          <Button
+                            type="submit"
+                            disabled={!charNameInput.trim()}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setCreatingLabel(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </form>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          className="mt-3"
+                          onClick={() => {
+                            setCreatingLabel(g.speaker_label);
+                            setCharNameInput(
+                              g.display_name !== g.speaker_label
+                                ? g.display_name
+                                : "",
+                            );
+                          }}
+                        >
+                          <UserPlus className="h-3.5 w-3.5" />
+                          Create character
+                        </Button>
+                      )}
                     </li>
                   ))}
                 </ul>

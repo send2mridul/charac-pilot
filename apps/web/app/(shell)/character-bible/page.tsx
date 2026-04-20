@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BookOpen, ImageIcon } from "lucide-react";
+import { BookOpen, ImageIcon, Mic2 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { CharacterDto } from "@/lib/api/types";
@@ -58,7 +58,7 @@ export default function CharacterBiblePage() {
     <div className="space-y-10">
       <PageHeader
         title="Character Bible"
-        subtitle="Canonical look, behavior, and continuity rules — scoped to the active project in the sidebar."
+        subtitle="Saved characters from speaker diarization and manual creation — scoped to the active project."
         actions={
           <>
             <Button variant="secondary">Import references</Button>
@@ -116,13 +116,13 @@ export default function CharacterBiblePage() {
         <EmptyState
           icon={BookOpen}
           title="Pick a project"
-          description="Create a project first, then choose it above to load bible entries from the API."
+          description="Create a project first, then choose it above to load characters."
         />
       ) : characters.length === 0 ? (
         <EmptyState
           icon={ImageIcon}
-          title="No characters in API"
-          description="Seed data includes characters for projects p1 and p2. Switch project or extend the API store."
+          title="No characters yet"
+          description="Upload a video in Upload / Match, then create characters from speaker groups."
         />
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
@@ -131,19 +131,64 @@ export default function CharacterBiblePage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-text">{c.name}</h2>
-                  <p className="text-sm text-muted">{c.role}</p>
+                  <p className="text-sm text-muted">
+                    {c.role || "No role assigned"}
+                  </p>
                 </div>
-                <Badge tone="violet">Bible</Badge>
+                <div className="flex items-center gap-2">
+                  {c.is_narrator ? (
+                    <Badge tone="violet">Narrator</Badge>
+                  ) : null}
+                  {c.source_episode_id ? (
+                    <Badge tone="accent">From diarization</Badge>
+                  ) : (
+                    <Badge tone="default">Seed</Badge>
+                  )}
+                </div>
               </div>
 
-              <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                <div className="sm:col-span-1">
-                  <div className="flex aspect-[3/4] flex-col items-center justify-center rounded-xl bg-white/[0.03] ring-1 ring-dashed ring-white/15">
-                    <ImageIcon className="h-8 w-8 text-muted" />
-                    <p className="mt-2 text-xs text-muted">Reference grid</p>
+              <div className="mt-4 space-y-4 text-sm">
+                {c.source_speaker_labels.length > 0 ? (
+                  <div className="flex flex-wrap gap-4 text-xs text-muted">
+                    <span>
+                      <Mic2 className="mr-1 inline h-3 w-3" />
+                      {c.source_speaker_labels.join(", ")}
+                    </span>
+                    <span>{c.segment_count} segments</span>
+                    <span>{c.total_speaking_duration.toFixed(1)}s speaking</span>
                   </div>
-                </div>
-                <div className="sm:col-span-2 space-y-4 text-sm">
+                ) : null}
+
+                {c.default_voice_id ? (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                      Voice
+                    </p>
+                    <p className="mt-1 font-mono text-xs text-muted">
+                      {c.default_voice_id}
+                    </p>
+                  </div>
+                ) : null}
+
+                {c.sample_texts.length > 0 ? (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                      Sample lines
+                    </p>
+                    <div className="mt-1 space-y-1">
+                      {c.sample_texts.map((t, i) => (
+                        <p
+                          key={i}
+                          className="truncate text-xs italic text-muted"
+                        >
+                          &ldquo;{t}&rdquo;
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {c.traits.length > 0 ? (
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted">
                       Traits
@@ -156,6 +201,9 @@ export default function CharacterBiblePage() {
                       ))}
                     </ul>
                   </div>
+                ) : null}
+
+                {c.wardrobe_notes ? (
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted">
                       Wardrobe
@@ -164,6 +212,9 @@ export default function CharacterBiblePage() {
                       {c.wardrobe_notes}
                     </p>
                   </div>
+                ) : null}
+
+                {c.continuity_rules.length > 0 ? (
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted">
                       Continuity rules
@@ -174,7 +225,7 @@ export default function CharacterBiblePage() {
                       ))}
                     </ul>
                   </div>
-                </div>
+                ) : null}
               </div>
             </Panel>
           ))}

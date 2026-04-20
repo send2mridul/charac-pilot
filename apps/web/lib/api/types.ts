@@ -24,6 +24,23 @@ export type CharacterDto = {
   traits: string[];
   wardrobe_notes: string;
   continuity_rules: string[];
+  source_speaker_labels: string[];
+  source_episode_id: string | null;
+  segment_count: number;
+  total_speaking_duration: number;
+  sample_texts: string[];
+  is_narrator: boolean;
+  default_voice_id: string | null;
+  voice_style_presets: Record<string, unknown> | null;
+};
+
+export type PreviewDto = {
+  preview_id: string;
+  character_id: string;
+  audio_url: string;
+  duration_ms: number;
+  text: string;
+  provider: string;
 };
 
 export type JobDto = {
