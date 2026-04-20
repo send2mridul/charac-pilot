@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   CheckCircle2,
   Film,
@@ -17,7 +18,6 @@ import type {
   CharacterDto,
   EpisodeMediaJobResult,
   JobDto,
-  MatchCandidateDto,
   SpeakerGroupDto,
   TranscriptSegmentDto,
 } from "@/lib/api/types";
@@ -29,13 +29,6 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Panel } from "@/components/ui/Panel";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Spinner } from "@/components/ui/Spinner";
-
-function candidatesFromJob(job: JobDto | null): MatchCandidateDto[] {
-  if (!job?.result || typeof job.result !== "object") return [];
-  const raw = (job.result as Record<string, unknown>).match_candidates;
-  if (!Array.isArray(raw)) return [];
-  return raw as MatchCandidateDto[];
-}
 
 function mediaResultFromJob(job: JobDto | null): EpisodeMediaJobResult | null {
   if (!job?.result || typeof job.result !== "object") return null;
@@ -79,12 +72,16 @@ function resolveEpisodeIdForTranscript(
 }
 
 function formatTimecode(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "—";
+  if (!Number.isFinite(seconds)) return "--:--";
   const s = Math.max(0, seconds);
   const m = Math.floor(s / 60);
   const r = s % 60;
   const sec = r < 10 ? `0${r.toFixed(2)}` : r.toFixed(2);
   return `${m}:${sec}`;
+}
+
+function speakerRowDomId(label: string): string {
+  return `spk-${label.replace(/[^a-zA-Z0-9_-]+/g, "_")}`;
 }
 
 type Phase = "idle" | "uploading" | "processing" | "done" | "failed";
@@ -118,6 +115,8 @@ export default function UploadMatchPage() {
   const [creatingLabel, setCreatingLabel] = useState<string | null>(null);
   const [charNameInput, setCharNameInput] = useState("");
   const [charCreateError, setCharCreateError] = useState<string | null>(null);
+  const [selectedTranscriptSegmentId, setSelectedTranscriptSegmentId] =
+    useState<string | null>(null);
 
   const pollJob = useCallback(async (jobId: string) => {
     const j = await api.getJob(jobId);
@@ -147,6 +146,7 @@ export default function UploadMatchPage() {
     setSpeakerGroupsError(null);
     setCreatedChars({});
     setCharCreateError(null);
+    setSelectedTranscriptSegmentId(null);
     setPhase("uploading");
     setUploadRatio(0);
     try {
@@ -166,7 +166,6 @@ export default function UploadMatchPage() {
   }
 
   const mediaDone = job?.status === "done" ? mediaResultFromJob(job) : null;
-  const candidates = job?.status === "done" ? candidatesFromJob(job) : [];
   const transcriptEpisodeId = resolveEpisodeIdForTranscript(job, mediaDone);
 
   useEffect(() => {
@@ -293,9 +292,8 @@ export default function UploadMatchPage() {
   return (
     <div className="space-y-10">
       <PageHeader
-        title="New Upload / Match"
-        subtitle="Upload a video: local save, FFmpeg thumbnails + WAV, then faster-whisper transcription. Poll the job, then transcript segments load from the API."
-        actions={<Button variant="secondary">Use library</Button>}
+        title="Import from Video"
+        subtitle="Bring in an older episode to detect speakers, build a transcript, and turn speaker groups into characters. You can also add characters manually at any time."
       />
 
       <Panel>
@@ -323,15 +321,10 @@ export default function UploadMatchPage() {
           <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-accent-dim text-accent ring-1 ring-accent/25">
             <UploadCloud className="h-8 w-8" />
           </div>
-          <p className="mt-4 text-sm font-medium text-text">
-            Video upload (multipart)
-          </p>
+          <p className="mt-4 text-sm font-medium text-text">Upload video</p>
           <p className="mt-1 max-w-sm text-sm text-muted">
-            <code className="rounded bg-white/5 px-1 py-0.5 text-xs">
-              POST /projects/&#123;id&#125;/episodes/upload
-            </code>{" "}
-            with form field <code className="text-xs">file</code>. MP4, MOV,
-            MKV, WebM, M4V, AVI supported.
+            MP4, MOV, MKV, WebM, M4V, or AVI. Upload and processing run on your
+            computer.
           </p>
 
           <input
@@ -350,6 +343,7 @@ export default function UploadMatchPage() {
               setTranscriptFetchDone(false);
               setSpeakerGroups([]);
               setSpeakerGroupsError(null);
+              setSelectedTranscriptSegmentId(null);
             }}
           />
 
@@ -392,7 +386,7 @@ export default function UploadMatchPage() {
               <p className="text-xs text-muted">
                 {phase === "uploading"
                   ? "Upload progress"
-                  : "Server processing (FFmpeg + Whisper)"}
+                  : "Transcribing audio and grouping speakers"}
               </p>
               <ProgressBar value={displayProgress} />
             </div>
@@ -401,7 +395,7 @@ export default function UploadMatchPage() {
 
         <Panel>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold text-text">Job status</h2>
+            <h2 className="text-sm font-semibold text-text">Processing status</h2>
             {job ? (
               <Badge
                 tone={
@@ -421,21 +415,19 @@ export default function UploadMatchPage() {
 
           {job ? (
             <div className="mt-4 space-y-3 text-sm">
-              <p className="font-mono text-xs text-muted">{job.id}</p>
-              <p className="text-xs text-muted">type: {job.type}</p>
-              <p className="text-muted">{job.message}</p>
+              {job.message ? (
+                <p className="text-muted">{job.message}</p>
+              ) : (
+                <p className="text-muted">Working on your video.</p>
+              )}
               {phase !== "uploading" ? (
                 <ProgressBar value={job.progress} />
               ) : null}
             </div>
           ) : (
             <p className="mt-4 text-sm text-muted">
-              Upload a file to create an <code className="text-xs">episode_media</code>{" "}
-              job, then this panel polls{" "}
-              <code className="rounded bg-white/5 px-1 py-0.5 text-xs">
-                GET /jobs/&#123;id&#125;
-              </code>
-              .
+              Choose a video and upload to extract audio, thumbnails, and a
+              transcript.
             </p>
           )}
 
@@ -444,12 +436,9 @@ export default function UploadMatchPage() {
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-5 w-5 text-accent" />
                 <h3 className="text-sm font-semibold text-text">
-                  Processed episode
+                  Import ready
                 </h3>
               </div>
-              <p className="mt-2 font-mono text-xs text-muted">
-                {mediaDone.episode_id}
-              </p>
               {mediaDone.duration_sec != null ? (
                 <p className="mt-1 text-xs text-muted">
                   Duration: {mediaDone.duration_sec.toFixed(2)}s
@@ -463,14 +452,11 @@ export default function UploadMatchPage() {
               ) : null}
               {mediaDone.transcript_segment_count != null ? (
                 <p className="mt-1 text-xs text-muted">
-                  Transcript segments (job): {mediaDone.transcript_segment_count}
+                  Transcript segments: {mediaDone.transcript_segment_count}
                 </p>
               ) : null}
-              <p className="mt-2 break-all text-xs text-muted">
-                Video: {mediaDone.source_video_path}
-              </p>
-              <p className="mt-1 break-all text-xs text-muted">
-                Audio: {mediaDone.extracted_audio_path}
+              <p className="mt-2 text-xs text-muted">
+                This import is saved for the active project on your computer.
               </p>
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {mediaDone.thumbnail_paths.map((rel, i) => (
@@ -510,7 +496,7 @@ export default function UploadMatchPage() {
                 {showTranscriptSpinner && !transcriptError ? (
                   <div className="mt-4 flex items-center gap-2 text-sm text-muted">
                     <Spinner className="h-4 w-4 border-t-canvas" />
-                    {"Fetching GET /episodes/{id}/segments…"}
+                    Loading transcript…
                   </div>
                 ) : null}
                 {transcriptFetchDone &&
@@ -526,30 +512,105 @@ export default function UploadMatchPage() {
                       const group = speakerGroups.find(
                         (g) => g.speaker_label === row.speaker_label,
                       );
-                      const label = group?.display_name ?? row.speaker_label ?? "—";
+                      const label =
+                        group?.display_name ?? row.speaker_label ?? "Unknown";
+                      const ep = transcriptEpisodeId;
+                      const canSpeaker = Boolean(row.speaker_label);
+                      const sel = selectedTranscriptSegmentId === row.segment_id;
                       return (
                         <li
                           key={row.segment_id}
-                          className="rounded-lg px-3 py-2 text-sm hover:bg-white/[0.03]"
+                          className={`rounded-lg text-sm ring-1 transition hover:bg-white/[0.02] ${
+                            sel
+                              ? "bg-accent/10 ring-accent/35"
+                              : "ring-transparent"
+                          }`}
                         >
-                          <div className="flex flex-wrap items-baseline justify-between gap-2">
-                            <span className="font-mono text-[11px] text-muted">
-                              {formatTimecode(row.start_time)} →{" "}
-                              {formatTimecode(row.end_time)}
-                            </span>
-                            <Badge
-                              tone={
-                                group?.is_narrator
-                                  ? "violet"
-                                  : row.speaker_label?.startsWith("SPEAKER_")
-                                    ? "accent"
-                                    : "default"
-                              }
+                          <button
+                            type="button"
+                            className="w-full px-3 py-2 text-left"
+                            onClick={() =>
+                              setSelectedTranscriptSegmentId(row.segment_id)
+                            }
+                          >
+                            <div className="flex flex-wrap items-baseline justify-between gap-2">
+                              <span className="font-mono text-[11px] text-muted">
+                                {formatTimecode(row.start_time)} to{" "}
+                                {formatTimecode(row.end_time)}
+                              </span>
+                              <Badge
+                                tone={
+                                  group?.is_narrator
+                                    ? "violet"
+                                    : row.speaker_label?.startsWith("SPEAKER_")
+                                      ? "accent"
+                                      : "default"
+                                }
+                              >
+                                {label}
+                              </Badge>
+                            </div>
+                            <p className="mt-1 text-text">{row.text}</p>
+                          </button>
+                          <div
+                            className="flex flex-wrap gap-2 border-t border-white/[0.06] px-3 py-2"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {ep ? (
+                              <Link
+                                href={`/replace-lines?episode=${encodeURIComponent(ep)}&segment=${encodeURIComponent(row.segment_id)}`}
+                                className="inline-flex items-center rounded-lg bg-white/[0.06] px-2.5 py-1 text-xs font-medium text-text ring-1 ring-white/[0.08] transition hover:bg-white/[0.1]"
+                              >
+                                Use in Replace Lines
+                              </Link>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              className="!px-2.5 !py-1 !text-xs"
+                              disabled={!canSpeaker}
+                              onClick={() => {
+                                const lab = row.speaker_label;
+                                if (!lab) return;
+                                setSelectedTranscriptSegmentId(row.segment_id);
+                                setCreatingLabel(lab);
+                                const g = speakerGroups.find(
+                                  (x) => x.speaker_label === lab,
+                                );
+                                setCharNameInput(
+                                  g && g.display_name !== lab
+                                    ? g.display_name
+                                    : "",
+                                );
+                                window.requestAnimationFrame(() => {
+                                  document
+                                    .getElementById(speakerRowDomId(lab))
+                                    ?.scrollIntoView({
+                                      behavior: "smooth",
+                                      block: "center",
+                                    });
+                                });
+                              }}
                             >
-                              {label}
-                            </Badge>
+                              <UserPlus className="h-3 w-3" />
+                              Create character from speaker
+                            </Button>
+                            {group?.is_narrator ? null : (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                className="!px-2.5 !py-1 !text-xs"
+                                disabled={!canSpeaker}
+                                onClick={() => {
+                                  const lab = row.speaker_label;
+                                  if (!lab) return;
+                                  void handleNarrator(lab, true);
+                                }}
+                              >
+                                Mark as narrator
+                              </Button>
+                            )}
                           </div>
-                          <p className="mt-1 text-text">{row.text}</p>
                         </li>
                       );
                     })}
@@ -560,12 +621,17 @@ export default function UploadMatchPage() {
           ) : null}
 
           {mediaDone && transcriptFetchDone ? (
-            <div className="mt-6 border-t border-white/[0.06] pt-6">
+              <div className="mt-6 border-t border-white/[0.06] pt-6">
+              <p className="mb-4 max-w-prose text-sm text-muted">
+                Speaker groups are an onboarding shortcut. Use them to name
+                voices and create characters, or skip straight to Characters and
+                Voice Studio.
+              </p>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Users className="h-4 w-4 text-accent" />
                   <h3 className="text-sm font-semibold text-text">
-                    Draft speaker groups
+                    Speaker groups
                   </h3>
                 </div>
                 {speakerGroupsLoading ? (
@@ -606,7 +672,8 @@ export default function UploadMatchPage() {
                   {speakerGroups.map((g) => (
                     <li
                       key={g.speaker_label}
-                      className="rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/[0.06]"
+                      id={speakerRowDomId(g.speaker_label)}
+                      className="scroll-mt-24 rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/[0.06]"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="flex items-center gap-2">
@@ -704,9 +771,6 @@ export default function UploadMatchPage() {
                           <span className="text-xs font-medium text-text">
                             Saved as &ldquo;{createdChars[g.speaker_label].name}&rdquo;
                           </span>
-                          <span className="text-[11px] text-muted">
-                            ({createdChars[g.speaker_label].id})
-                          </span>
                         </div>
                       ) : creatingLabel === g.speaker_label ? (
                         <form
@@ -764,46 +828,6 @@ export default function UploadMatchPage() {
             </div>
           ) : null}
 
-          <div className="mt-6 border-t border-white/[0.06] pt-6">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-text">
-                Match candidates
-              </h3>
-              <Badge tone="violet">Heuristic (stub)</Badge>
-            </div>
-            {candidates.length === 0 ? (
-              <p className="mt-3 text-sm text-muted">
-                {job?.type === "episode_media"
-                  ? "Match heuristics are not part of this milestone."
-                  : job?.status === "done"
-                    ? "No candidates on this job."
-                    : "Complete a non-media stub job to load sample matches."}
-              </p>
-            ) : (
-              <ul className="mt-4 space-y-4">
-                {candidates.map((c) => (
-                  <li
-                    key={c.id}
-                    className="rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/[0.06]"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium text-text">{c.label}</p>
-                        <p className="mt-1 text-xs text-muted">{c.source}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="h-4 w-4 text-accent" />
-                        <span className="text-sm font-semibold text-text">
-                          {Math.round(c.confidence * 100)}%
-                        </span>
-                      </div>
-                    </div>
-                    <ProgressBar value={c.confidence} className="mt-3" />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
         </Panel>
       </div>
     </div>

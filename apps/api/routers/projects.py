@@ -1,11 +1,18 @@
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 
-from schemas.character import CharacterOut, PatchCharacterBody
+from schemas.character import (
+    CharacterOut,
+    CreateManualCharacterBody,
+    PatchCharacterBody,
+)
+from services.character_avatar import save_character_avatar_file
 from schemas.episode import EpisodeCreateResult, EpisodeOut
-from schemas.project import ProjectCreate, ProjectOut
+from schemas.project import ProjectCreate, ProjectOut, ProjectPatch
+from schemas.voice_clip import VoiceClipOut
 from services import character_service, episode_service, job_service, project_service
+from services.voice_clip_service import list_for_project
 from services.episode_media_worker import schedule_episode_processing
 from storage_paths import UPLOADS_ROOT, ensure_storage_dirs
 
@@ -24,12 +31,28 @@ def create_project(body: ProjectCreate):
     return project_service.create_project(body)
 
 
-@router.get("/{project_id}", response_model=ProjectOut)
-def get_project(project_id: str):
-    p = project_service.get_project(project_id)
-    if not p:
+def _delete_project_response(project_id: str) -> Response:
+    if not project_service.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    return p
+    project_service.delete_project(project_id)
+    return Response(status_code=204)
+
+
+@router.post("/delete/{project_id}", status_code=204)
+def post_delete_project_path_prefix(project_id: str):
+    """Same as POST /{project_id}/delete; alternate URL for strict proxies and older clients."""
+    return _delete_project_response(project_id)
+
+
+# --- More specific /{project_id}/... routes first, then mutating verbs, then GET by id.
+#    Order avoids edge cases where some stacks mishandle method routing for the same path.
+
+
+@router.get("/{project_id}/clips", response_model=list[VoiceClipOut])
+def list_project_clips(project_id: str):
+    if not project_service.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return list_for_project(project_id)
 
 
 @router.get("/{project_id}/episodes", response_model=list[EpisodeOut])
@@ -96,6 +119,18 @@ def list_characters(project_id: str):
     return character_service.list_characters(project_id)
 
 
+@router.post("/{project_id}/characters", response_model=CharacterOut)
+def create_character_manual(project_id: str, body: CreateManualCharacterBody):
+    if not project_service.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return character_service.create_manual_character(
+        project_id,
+        body.name,
+        body.role or "",
+        body.wardrobe_notes or "",
+    )
+
+
 @router.patch("/{project_id}/characters/{character_id}", response_model=CharacterOut)
 def patch_character(project_id: str, character_id: str, body: PatchCharacterBody):
     if not project_service.get_project(project_id):
@@ -110,3 +145,60 @@ def patch_character(project_id: str, character_id: str, body: PatchCharacterBody
     if not updated:
         raise HTTPException(status_code=404, detail="Character not found")
     return updated
+
+
+@router.post("/{project_id}/characters/{character_id}/avatar", response_model=CharacterOut)
+async def upload_character_avatar_under_project(
+    project_id: str, character_id: str, file: UploadFile = File(...)
+):
+    if not project_service.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    ch = character_service.get_character(character_id)
+    if not ch or ch.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return await save_character_avatar_file(character_id, file)
+
+
+@router.post("/{project_id}/update", response_model=ProjectOut)
+def post_update_project(project_id: str, body: ProjectPatch):
+    """POST fallback when PATCH/PUT are blocked (some proxies or older stacks return 405)."""
+    updated = project_service.update_project(project_id, body)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return updated
+
+
+@router.post("/{project_id}/delete", status_code=204)
+def post_delete_project(project_id: str):
+    """POST fallback when DELETE is blocked."""
+    return _delete_project_response(project_id)
+
+
+@router.patch("/{project_id}", response_model=ProjectOut)
+def patch_project(project_id: str, body: ProjectPatch):
+    updated = project_service.update_project(project_id, body)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return updated
+
+
+@router.put("/{project_id}", response_model=ProjectOut)
+def put_project(project_id: str, body: ProjectPatch):
+    """Same as PATCH. Some clients send PUT; this avoids 405 Method Not Allowed."""
+    updated = project_service.update_project(project_id, body)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return updated
+
+
+@router.delete("/{project_id}", status_code=204)
+def remove_project(project_id: str):
+    return _delete_project_response(project_id)
+
+
+@router.get("/{project_id}", response_model=ProjectOut)
+def get_project(project_id: str):
+    p = project_service.get_project(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return p

@@ -151,6 +151,7 @@ def generate_preview(
         "preview_id": preview_id,
         "character_id": character_id,
         "audio_url": audio_url,
+        "audio_relpath": rel,
         "duration_ms": duration_ms,
         "text": text,
         "provider": provider,

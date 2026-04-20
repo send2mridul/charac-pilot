@@ -31,7 +31,17 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/",
-        destination: "/dashboard",
+        destination: "/projects",
+        permanent: false,
+      },
+      {
+        source: "/scene-replace",
+        destination: "/replace-lines",
+        permanent: false,
+      },
+      {
+        source: "/character-bible",
+        destination: "/characters",
         permanent: false,
       },
     ];

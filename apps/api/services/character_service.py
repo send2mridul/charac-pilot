@@ -18,6 +18,32 @@ def get_character(character_id: str) -> CharacterOut | None:
     return _to_out(c) if c else None
 
 
+def create_manual_character(
+    project_id: str,
+    name: str,
+    role: str = "",
+    wardrobe_notes: str = "",
+) -> CharacterOut:
+    """Create a character without an episode / speaker group (manual entry)."""
+    nm = name.strip() or "Unnamed"
+    rec = store.create_character(
+        project_id=project_id,
+        name=nm,
+        role=role.strip(),
+        traits=[],
+        wardrobe_notes=wardrobe_notes.strip(),
+        continuity_rules=[],
+        source_speaker_labels=[],
+        source_episode_id=None,
+        segment_count=0,
+        total_speaking_duration=0.0,
+        sample_texts=[],
+        is_narrator=False,
+    )
+    log.info("created manual character id=%s name=%s project=%s", rec.id, nm, project_id)
+    return _to_out(rec)
+
+
 def create_character_from_group(
     episode_id: str,
     speaker_label: str,
@@ -70,6 +96,7 @@ def _to_out(c: CharacterRecord) -> CharacterOut:
         traits=c.traits,
         wardrobe_notes=c.wardrobe_notes,
         continuity_rules=c.continuity_rules,
+        thumbnail_paths=c.thumbnail_paths,
         source_speaker_labels=c.source_speaker_labels,
         source_episode_id=c.source_episode_id,
         segment_count=c.segment_count,
@@ -81,4 +108,7 @@ def _to_out(c: CharacterRecord) -> CharacterOut:
         voice_display_name=c.voice_display_name,
         voice_style_presets=c.voice_style_presets,
         preview_audio_path=c.preview_audio_path,
+        voice_source_type=c.voice_source_type,
+        voice_parent_id=c.voice_parent_id,
+        voice_description_meta=c.voice_description_meta,
     )

@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronRight, FolderKanban, Sparkles } from "lucide-react";
-import { mainNav } from "@/lib/nav";
+import {
+  APP_BRAND,
+  comingSoonNav,
+  secondaryNav,
+  workflowNav,
+} from "@/lib/nav";
 import { useHydrated } from "@/lib/useHydrated";
 import { useProjects } from "@/components/providers/ProjectProvider";
 import { SidebarSkeleton } from "@/components/layout/SidebarSkeleton";
@@ -27,21 +32,23 @@ export function Sidebar() {
         </div>
         <div className="leading-tight">
           <p className="text-sm font-semibold tracking-tight text-text">
-            CharacPilot
+            {APP_BRAND}
           </p>
-          <p className="text-[11px] text-muted">Continuity cockpit</p>
+          <p className="text-[11px] text-muted">Cast your voices</p>
         </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <p className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-widest text-muted/80">
-          Workspace
+          Workflow
         </p>
         <ul className="space-y-0.5">
-          {mainNav.map((item) => {
+          {workflowNav.map((item) => {
             const active =
               pathname === item.href ||
-              (item.href !== "/dashboard" && pathname.startsWith(item.href));
+              (item.href === "/projects"
+                ? pathname.startsWith("/projects")
+                : pathname === item.href || pathname.startsWith(`${item.href}/`));
             const Icon = item.icon;
             return (
               <li key={item.href}>
@@ -66,6 +73,52 @@ export function Sidebar() {
                   {active ? (
                     <ChevronRight className="h-4 w-4 text-accent/80" />
                   ) : null}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+
+        <p className="mt-6 px-2 pb-2 text-[11px] font-semibold uppercase tracking-widest text-muted/80">
+          Helpers
+        </p>
+        <ul className="space-y-0.5">
+          {secondaryNav.map((item) => {
+            const active =
+              pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const Icon = item.icon;
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  className={`group flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[13px] transition ${
+                    active
+                      ? "bg-white/[0.06] text-text"
+                      : "text-muted/90 hover:bg-white/[0.04] hover:text-text"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
+                  <span className="flex-1 leading-snug">{item.label}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+
+        <p className="mt-5 px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted/60">
+          Coming soon
+        </p>
+        <ul className="space-y-0.5 opacity-80">
+          {comingSoonNav.map((item) => {
+            const Icon = item.icon;
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  className="group flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[12px] text-muted/80 transition hover:bg-white/[0.03] hover:text-muted"
+                >
+                  <Icon className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                  <span className="flex-1 leading-snug">{item.label}</span>
                 </Link>
               </li>
             );
@@ -138,9 +191,10 @@ function BadgePill({ children }: { children: string }) {
 function PanelMini() {
   return (
     <div className="rounded-xl bg-gradient-to-br from-panel-elevated to-panel p-3 ring-1 ring-white/10">
-      <p className="text-xs font-medium text-text">Local API</p>
+      <p className="text-xs font-medium text-text">Local workspace</p>
       <p className="mt-1 text-[11px] leading-relaxed text-muted">
-        Media &amp; AI workers are off. Stub jobs advance when polled.
+        Projects and media stay on this machine. Keep the API running to use
+        the full workflow.
       </p>
     </div>
   );

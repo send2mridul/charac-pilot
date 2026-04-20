@@ -4,9 +4,18 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from schemas.voice_catalog import VoiceCatalogItem, VoiceCatalogResponse
+from schemas.voice_design import (
+    DesignVoiceBody,
+    DesignVoiceResponse,
+    RemixVoiceBody,
+    RemixVoiceResponse,
+    SaveCustomVoiceBody,
+    SaveCustomVoiceResult,
+)
+from services import voice_design_service
 from services.voice_catalog import get_voice_pool, paginate_voices, search_voices
 
 router = APIRouter()
@@ -15,6 +24,43 @@ log = logging.getLogger("characpilot.voices")
 
 def _to_items(raw: list[dict]) -> list[VoiceCatalogItem]:
     return [VoiceCatalogItem(**v) for v in raw]
+
+
+@router.post("/design", response_model=DesignVoiceResponse)
+def post_voice_design(body: DesignVoiceBody):
+    """Generate preview candidates from a text description (ElevenLabs Voice Design)."""
+    return voice_design_service.design_voice(body)
+
+
+@router.post("/design/save", response_model=SaveCustomVoiceResult)
+def post_save_designed_voice(body: SaveCustomVoiceBody):
+    """Create a permanent voice from a design preview and assign it to a character."""
+    payload = body.model_copy(update={"source_type": "designed", "parent_voice_id": None})
+    try:
+        return voice_design_service.save_custom_voice(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/remix/save", response_model=SaveCustomVoiceResult)
+def post_save_remixed_voice(body: SaveCustomVoiceBody):
+    """Create a voice from a remix preview and assign it to a character."""
+    if not (body.parent_voice_id or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="parent_voice_id is required when saving a remixed voice",
+        )
+    payload = body.model_copy(update={"source_type": "remixed"})
+    try:
+        return voice_design_service.save_custom_voice(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/{voice_id}/remix", response_model=RemixVoiceResponse)
+def post_voice_remix(voice_id: str, body: RemixVoiceBody):
+    """Generate remix preview candidates for an existing ElevenLabs voice id."""
+    return voice_design_service.remix_voice(voice_id, body)
 
 
 @router.get("/catalog", response_model=VoiceCatalogResponse)

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CharacPilot",
+  title: "CastVoice",
   description: "Character continuity and media cockpit",
 };
 

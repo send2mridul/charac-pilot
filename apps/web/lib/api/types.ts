@@ -5,6 +5,7 @@ export type ProjectDto = {
   scene_count: number;
   lead: string;
   updated_at: string;
+  description?: string;
 };
 
 export type EpisodeDto = {
@@ -24,6 +25,7 @@ export type CharacterDto = {
   traits: string[];
   wardrobe_notes: string;
   continuity_rules: string[];
+  thumbnail_paths?: string[];
   source_speaker_labels: string[];
   source_episode_id: string | null;
   segment_count: number;
@@ -35,6 +37,10 @@ export type CharacterDto = {
   voice_display_name: string | null;
   voice_style_presets: Record<string, unknown> | null;
   preview_audio_path: string | null;
+  /** catalog | designed | remixed when set */
+  voice_source_type?: string | null;
+  voice_parent_id?: string | null;
+  voice_description_meta?: string | null;
 };
 
 export type VoiceCatalogItem = {
@@ -58,6 +64,32 @@ export type VoiceCatalogResponse = {
   message: string | null;
 };
 
+export type VoiceDesignSource = "elevenlabs" | "fallback";
+
+export type VoicePreviewCandidateDto = {
+  generated_voice_id: string;
+  label: string;
+  preview_audio_url: string;
+  duration_secs: number | null;
+};
+
+export type DesignVoiceResponseDto = {
+  source: VoiceDesignSource;
+  message: string | null;
+  preview_text_used: string;
+  candidates: VoicePreviewCandidateDto[];
+};
+
+export type RemixVoiceResponseDto = DesignVoiceResponseDto;
+
+export type SaveCustomVoiceResultDto = {
+  character_id: string;
+  voice_id: string;
+  voice_name: string;
+  source_type: string;
+  provider: string;
+};
+
 export type PreviewDto = {
   preview_id: string;
   character_id: string;
@@ -65,6 +97,20 @@ export type PreviewDto = {
   duration_ms: number;
   text: string;
   provider: string;
+  clip_id?: string | null;
+};
+
+export type VoiceClipDto = {
+  id: string;
+  character_id: string;
+  project_id: string;
+  voice_id: string;
+  voice_name: string;
+  text: string;
+  tone_style_hint: string;
+  audio_url: string;
+  title: string;
+  created_at: string;
 };
 
 export type JobDto = {

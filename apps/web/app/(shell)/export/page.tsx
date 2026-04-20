@@ -53,11 +53,11 @@ function ExportInner() {
     <div className="space-y-10">
       <PageHeader
         title="Export"
-        subtitle="Preset cards are fixtures. Queue a real stub job with POST /episodes/{id}/export (defaults to ep1 or ?episode= from project detail)."
+        subtitle="Experimental. Queue a render job for an episode. Full export presets are still in progress."
         actions={
           <Button variant="secondary" onClick={() => void queueStubExport()}>
             <Download className="h-4 w-4" />
-            Queue API export
+            Start export job
           </Button>
         }
       />
@@ -65,8 +65,7 @@ function ExportInner() {
       {episodeFromQuery ? (
         <Panel>
           <p className="text-sm text-muted">
-            Episode from query:{" "}
-            <span className="font-mono text-text">{episodeFromQuery}</span>
+            Episode: <span className="text-text">{episodeFromQuery}</span>
           </p>
         </Panel>
       ) : null}
@@ -79,13 +78,13 @@ function ExportInner() {
             <h2 className="text-sm font-semibold text-text">Active job</h2>
             <Badge tone={statusTone(job.status)}>{job.status}</Badge>
           </div>
-          <p className="mt-2 font-mono text-xs text-muted">{job.id}</p>
+          <p className="mt-2 text-xs text-muted">
+            Job <span className="font-mono">{job.id.slice(0, 16)}…</span>
+          </p>
           <p className="mt-1 text-sm text-muted">{job.message}</p>
           <ProgressBar value={job.progress} className="mt-3" />
-          {job.status === "done" && job.result ? (
-            <pre className="mt-4 max-h-40 overflow-auto rounded-lg bg-canvas p-3 text-xs text-muted">
-              {JSON.stringify(job.result, null, 2)}
-            </pre>
+          {job.status === "done" ? (
+            <p className="mt-4 text-sm text-muted">Job finished.</p>
           ) : null}
         </Panel>
       ) : null}

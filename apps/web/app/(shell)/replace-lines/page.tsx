@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Clapperboard, Mic2, Trash2, Volume2, Wand2 } from "lucide-react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Clapperboard, Mic2, Trash2, Wand2 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { mediaUrl } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
@@ -17,6 +18,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { PageHeader } from "@/components/ui/PageHeader";
+import Link from "next/link";
 import { Panel } from "@/components/ui/Panel";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
@@ -28,13 +30,14 @@ function formatTime(sec: number): string {
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
-export default function SceneReplacePage() {
+function ReplaceLinesContent() {
   const {
     projects,
     activeProjectId,
     setActiveProjectId,
     loading: projectsLoading,
   } = useProjects();
+  const searchParams = useSearchParams();
 
   const [episodes, setEpisodes] = useState<EpisodeDto[]>([]);
   const [epLoading, setEpLoading] = useState(false);
@@ -56,6 +59,13 @@ export default function SceneReplacePage() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingRepId, setEditingRepId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const e = searchParams.get("episode");
+    const s = searchParams.get("segment");
+    if (e) setEpisodeId(e);
+    if (s) setSelectedSegId(s);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -229,11 +239,21 @@ export default function SceneReplacePage() {
   return (
     <div className="space-y-10">
       <PageHeader
-        title="Scene Replace"
-        subtitle="Pick a transcript segment, choose a saved character voice, and generate replacement dialogue audio."
+        title="Replace Lines"
+        subtitle="Swap dialogue on a transcript line and generate new audio using a character voice you set up in Voice Studio."
       />
 
-      {error ? <ErrorBanner title="Scene replace" detail={error} /> : null}
+      <Panel>
+        <ol className="list-inside list-decimal space-y-1.5 text-sm leading-relaxed text-muted">
+          <li>Choose an episode that already has a transcript.</li>
+          <li>Select the line you want to change.</li>
+          <li>Pick the character who should speak it.</li>
+          <li>Type the replacement line.</li>
+          <li>Generate audio (uses that character&apos;s assigned voice).</li>
+        </ol>
+      </Panel>
+
+      {error ? <ErrorBanner title="Replace lines" detail={error} /> : null}
 
       <Panel>
         <label className="block text-xs font-semibold uppercase tracking-wide text-muted">
@@ -284,7 +304,7 @@ export default function SceneReplacePage() {
                   setEditingRepId(null);
                 }}
               >
-                <option value="">— Select episode —</option>
+                <option value="">Select episode</option>
                 {episodes.map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.title} ({e.segment_count} segments)
@@ -296,8 +316,11 @@ export default function SceneReplacePage() {
               <Skeleton className="mt-4 h-40 w-full" />
             ) : episodeId && segments.length === 0 ? (
               <p className="mt-4 text-sm text-muted">
-                No transcript segments yet. Upload and process a video in Upload /
-                Match first.
+                No transcript segments yet.{" "}
+                <Link href="/upload-match" className="text-accent hover:underline">
+                  Import from Video
+                </Link>{" "}
+                to process a video, or pick another episode.
               </p>
             ) : (
               <ul className="mt-4 max-h-[360px] space-y-1 overflow-y-auto rounded-lg ring-1 ring-white/[0.06]">
@@ -318,7 +341,7 @@ export default function SceneReplacePage() {
                         }}
                       >
                         <span className="font-mono text-[11px] text-muted">
-                          {formatTime(s.start_time)}–{formatTime(s.end_time)}
+                          {formatTime(s.start_time)} to {formatTime(s.end_time)}
                         </span>
                         {s.speaker_label ? (
                           <span className="ml-2 inline-block align-middle">
@@ -339,7 +362,7 @@ export default function SceneReplacePage() {
               Replacement line
               {editingRepId ? (
                 <span className="ml-2 text-xs font-normal text-accent">
-                  (editing {editingRepId})
+                  (editing saved line)
                 </span>
               ) : null}
             </h2>
@@ -373,7 +396,7 @@ export default function SceneReplacePage() {
                     disabled={charLoading}
                     onChange={(e) => setCharacterId(e.target.value)}
                   >
-                    <option value="">— Choose character —</option>
+                    <option value="">Choose character</option>
                     {characters.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
@@ -411,7 +434,7 @@ export default function SceneReplacePage() {
 
                 <div>
                   <label className="text-[11px] font-semibold uppercase text-muted">
-                    Tone / style (optional)
+                    Tone / style hint (optional)
                   </label>
                   <input
                     className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
@@ -419,6 +442,9 @@ export default function SceneReplacePage() {
                     onChange={(e) => setToneStyle(e.target.value)}
                     placeholder="e.g. whisper, urgent, dry"
                   />
+                  <p className="mt-1 text-[11px] text-muted">
+                    Hints may behave differently depending on provider and model.
+                  </p>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
@@ -518,7 +544,6 @@ export default function SceneReplacePage() {
                       </Button>
                     </div>
                   </div>
-                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                   <audio
                     controls
                     className="mt-3 w-full max-w-md"
@@ -531,5 +556,19 @@ export default function SceneReplacePage() {
         </Panel>
       ) : null}
     </div>
+  );
+}
+
+export default function ReplaceLinesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center text-sm text-muted">
+          Loading…
+        </div>
+      }
+    >
+      <ReplaceLinesContent />
+    </Suspense>
   );
 }

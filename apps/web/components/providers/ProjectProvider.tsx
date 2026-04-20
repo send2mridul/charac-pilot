@@ -13,7 +13,8 @@ import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { ProjectDto } from "@/lib/api/types";
 
-const STORAGE_KEY = "characpilot.activeProjectId";
+const STORAGE_KEY = "castvoice.activeProjectId";
+const LEGACY_STORAGE_KEY = "characpilot.activeProjectId";
 
 type Ctx = {
   projects: ProjectDto[];
@@ -45,7 +46,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         if (current && list.some((p) => p.id === current)) return current;
         const stored =
           typeof window !== "undefined"
-            ? window.localStorage.getItem(STORAGE_KEY)
+            ? window.localStorage.getItem(STORAGE_KEY) ??
+              window.localStorage.getItem(LEGACY_STORAGE_KEY)
             : null;
         if (stored && list.some((p) => p.id === stored)) return stored;
         return list[0]?.id ?? null;

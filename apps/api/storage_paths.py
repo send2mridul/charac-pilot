@@ -7,11 +7,15 @@ from pathlib import Path
 # apps/api/storage
 STORAGE_ROOT = Path(__file__).resolve().parent / "storage"
 UPLOADS_ROOT = STORAGE_ROOT / "uploads"
+DATABASE_PATH = STORAGE_ROOT / "characpilot.db"
 
 
 def ensure_storage_dirs() -> None:
     UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
     (STORAGE_ROOT / "replacements").mkdir(parents=True, exist_ok=True)
+    (STORAGE_ROOT / "voice_design").mkdir(parents=True, exist_ok=True)
+    (STORAGE_ROOT / "avatars").mkdir(parents=True, exist_ok=True)
+    (STORAGE_ROOT / "clips").mkdir(parents=True, exist_ok=True)
 
 
 def to_rel_storage_path(absolute: Path) -> str:
