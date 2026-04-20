@@ -78,6 +78,10 @@ export type DesignVoiceResponseDto = {
   message: string | null;
   preview_text_used: string;
   candidates: VoicePreviewCandidateDto[];
+  normalized_retry_used?: boolean;
+  original_prompt?: string | null;
+  rewritten_prompt?: string | null;
+  safe_example_prompts?: string[];
 };
 
 export type RemixVoiceResponseDto = DesignVoiceResponseDto;
@@ -126,6 +130,26 @@ export type GenerateClipsResponseDto = {
     tone_style_hint: string;
     created_at: string;
   }>;
+};
+
+export type GenerateLinesResponseDto = {
+  character_id: string;
+  prompt: string;
+  generated_count: number;
+  lines: string[];
+};
+
+export type DraftLineDto = {
+  order: number;
+  text: string;
+  tone_style: string;
+};
+
+export type GenerateDraftLinesResponseDto = {
+  character_id: string;
+  prompt: string;
+  generated_count: number;
+  lines: DraftLineDto[];
 };
 
 export type JobDto = {

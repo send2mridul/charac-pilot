@@ -85,6 +85,9 @@ function speakerRowDomId(label: string): string {
 }
 
 type Phase = "idle" | "uploading" | "processing" | "done" | "failed";
+type PersistedImportContext = {
+  media: EpisodeMediaJobResult;
+};
 
 export default function UploadMatchPage() {
   const { activeProjectId, projects, setActiveProjectId, loading: boot } =
@@ -96,6 +99,9 @@ export default function UploadMatchPage() {
   const [job, setJob] = useState<JobDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [persistedMedia, setPersistedMedia] = useState<EpisodeMediaJobResult | null>(
+    null,
+  );
   const [transcriptSegments, setTranscriptSegments] = useState<
     TranscriptSegmentDto[]
   >([]);
@@ -118,6 +124,10 @@ export default function UploadMatchPage() {
   const [selectedTranscriptSegmentId, setSelectedTranscriptSegmentId] =
     useState<string | null>(null);
 
+  const storageKey = activeProjectId
+    ? `castvoice:import-context:${activeProjectId}`
+    : null;
+
   const pollJob = useCallback(async (jobId: string) => {
     const j = await api.getJob(jobId);
     setJob(j);
@@ -139,6 +149,7 @@ export default function UploadMatchPage() {
     setBusy(true);
     setError(null);
     setJob(null);
+    setPersistedMedia(null);
     setTranscriptSegments([]);
     setTranscriptError(null);
     setTranscriptFetchDone(false);
@@ -165,8 +176,43 @@ export default function UploadMatchPage() {
     }
   }
 
-  const mediaDone = job?.status === "done" ? mediaResultFromJob(job) : null;
+  const mediaDone = persistedMedia ?? (job?.status === "done" ? mediaResultFromJob(job) : null);
   const transcriptEpisodeId = resolveEpisodeIdForTranscript(job, mediaDone);
+
+  useEffect(() => {
+    setPersistedMedia(null);
+    setJob(null);
+    setTranscriptSegments([]);
+    setTranscriptError(null);
+    setTranscriptFetchDone(false);
+    setSpeakerGroups([]);
+    setSpeakerGroupsError(null);
+    setSelectedTranscriptSegmentId(null);
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as PersistedImportContext;
+      if (!parsed?.media?.episode_id) return;
+      setPersistedMedia(parsed.media);
+      setPhase("done");
+    } catch {
+      /* ignore invalid local data */
+    }
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey || !mediaDone) return;
+    const payload: PersistedImportContext = { media: mediaDone };
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(payload));
+    } catch {
+      /* ignore storage write errors */
+    }
+  }, [storageKey, mediaDone]);
 
   useEffect(() => {
     const ep = transcriptEpisodeId;
@@ -337,6 +383,7 @@ export default function UploadMatchPage() {
               setFile(f);
               setPhase("idle");
               setJob(null);
+              setPersistedMedia(null);
               setError(null);
               setTranscriptSegments([]);
               setTranscriptError(null);
@@ -344,6 +391,13 @@ export default function UploadMatchPage() {
               setSpeakerGroups([]);
               setSpeakerGroupsError(null);
               setSelectedTranscriptSegmentId(null);
+              if (storageKey) {
+                try {
+                  window.localStorage.removeItem(storageKey);
+                } catch {
+                  /* ignore storage delete errors */
+                }
+              }
             }}
           />
 
@@ -408,6 +462,8 @@ export default function UploadMatchPage() {
               >
                 {job.status}
               </Badge>
+            ) : mediaDone ? (
+              <Badge tone="success">done</Badge>
             ) : (
               <Badge tone="default">idle</Badge>
             )}
@@ -424,6 +480,10 @@ export default function UploadMatchPage() {
                 <ProgressBar value={job.progress} />
               ) : null}
             </div>
+          ) : mediaDone ? (
+            <p className="mt-4 text-sm text-muted">
+              Restored your latest processed upload for this project.
+            </p>
           ) : (
             <p className="mt-4 text-sm text-muted">
               Choose a video and upload to extract audio, thumbnails, and a

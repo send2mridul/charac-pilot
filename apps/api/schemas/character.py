@@ -4,6 +4,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# Scene prompt for draft line generation (MVP cap; keep in sync with web).
+PROMPT_MAX_CHARS = 600
+
 
 class CharacterOut(BaseModel):
     id: str
@@ -71,11 +74,17 @@ class GeneratePreviewBody(BaseModel):
 class GenerateClipsBody(BaseModel):
     mode: str = Field(default="multi_line")
     lines: list[str] = []
-    prompt: str | None = None
+    prompt: str | None = Field(default=None, max_length=PROMPT_MAX_CHARS)
     count: int = 3
     style: str | None = None
     clip_label_prefix: str | None = None
     voice_id: str | None = None
+
+
+class GenerateLinesBody(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=PROMPT_MAX_CHARS)
+    count: int = Field(default=4, ge=1, le=12)
+    style: str | None = None
 
 
 class PreviewOut(BaseModel):
@@ -120,3 +129,35 @@ class GenerateClipsOut(BaseModel):
     provider: str
     generated_count: int
     clips: list[BatchGeneratedClipOut]
+
+
+class GenerateLinesOut(BaseModel):
+    character_id: str
+    prompt: str
+    generated_count: int
+    lines: list[str]
+
+
+class DraftLineOut(BaseModel):
+    order: int
+    text: str
+    tone_style: str = ""
+
+
+class GenerateDraftLinesOut(BaseModel):
+    character_id: str
+    prompt: str
+    generated_count: int
+    lines: list[DraftLineOut]
+
+
+class ClipLineIn(BaseModel):
+    text: str
+    tone_style: str | None = None
+
+
+class GenerateClipsFromLinesBody(BaseModel):
+    lines: list[ClipLineIn] = []
+    style: str | None = None
+    clip_label_prefix: str | None = None
+    voice_id: str | None = None

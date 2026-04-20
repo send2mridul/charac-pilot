@@ -36,8 +36,15 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
 
 type StudioTab = "browse" | "design" | "remix";
-type ClipMode = "single" | "batch";
-type BatchInputMode = "multi_line" | "prompt";
+type DirectInputMode = "single_line" | "multi_line";
+type ReviewLine = {
+  id: string;
+  text: string;
+  tone_style: string;
+};
+
+/** Keep in sync with apps/api/schemas/character.py PROMPT_MAX_CHARS */
+const SCENE_PROMPT_MAX_CHARS = 600;
 
 function audioSrcFromApiPath(url: string): string {
   const trimmed = url.replace(/^\/media\//, "");
@@ -108,12 +115,13 @@ function VoiceStudioContent() {
   const [clipsLoading, setClipsLoading] = useState(false);
   const [clipLabel, setClipLabel] = useState("");
   const [clipBusyId, setClipBusyId] = useState<string | null>(null);
-  const [clipMode, setClipMode] = useState<ClipMode>("single");
-  const [batchInputMode, setBatchInputMode] =
-    useState<BatchInputMode>("multi_line");
-  const [batchLinesInput, setBatchLinesInput] = useState("");
-  const [batchPromptInput, setBatchPromptInput] = useState("");
-  const [batchCount, setBatchCount] = useState(5);
+  const [directInputMode, setDirectInputMode] =
+    useState<DirectInputMode>("single_line");
+  const [directLinesInput, setDirectLinesInput] = useState("");
+  const [promptInput, setPromptInput] = useState("");
+  const [promptLines, setPromptLines] = useState<ReviewLine[]>([]);
+  const [promptLinesBusy, setPromptLinesBusy] = useState(false);
+  const [showDirectTextAdvanced, setShowDirectTextAdvanced] = useState(false);
   const [editingVoice, setEditingVoice] = useState(false);
   const [showClipGenerator, setShowClipGenerator] = useState(true);
 
@@ -248,6 +256,12 @@ function VoiceStudioContent() {
     setRemixErr(null);
     setTab("browse");
     setClipLabel("");
+    setDirectInputMode("single_line");
+    setDirectLinesInput("");
+    setPromptInput("");
+    setPromptLines([]);
+    setPromptLinesBusy(false);
+    setShowDirectTextAdvanced(false);
   }, [selectedId]);
 
   useEffect(() => {
@@ -282,6 +296,17 @@ function VoiceStudioContent() {
     setPreview(null);
     setPreviewError(null);
     setSaveSuccess(false);
+    const panel = (searchParams.get("panel") || "").trim().toLowerCase();
+    if (panel === "voice") {
+      setEditingVoice(true);
+      setShowClipGenerator(false);
+      return;
+    }
+    if (panel === "clips") {
+      setEditingVoice(false);
+      setShowClipGenerator(true);
+      return;
+    }
     if (c.default_voice_id) {
       setEditingVoice(false);
       setShowClipGenerator(true);
@@ -289,7 +314,7 @@ function VoiceStudioContent() {
       setEditingVoice(true);
       setShowClipGenerator(false);
     }
-  }, [selectedId, characters]);
+  }, [selectedId, characters, searchParams]);
 
   async function handleAssignVoice() {
     if (!selected || !chosenVoiceId || !voiceHub) return;
@@ -316,73 +341,107 @@ function VoiceStudioContent() {
     }
   }
 
-  async function handleGenerate() {
-    if (!selected || !sampleText.trim()) return;
+  async function handleGenerateDirectClips() {
+    if (!selected) return;
     if (!selected.default_voice_id) {
       setPreviewError("Assign a voice first in Voice setup.");
       return;
     }
+    const lines =
+      directInputMode === "single_line"
+        ? [sampleText.trim()].filter(Boolean)
+        : directLinesInput
+            .split(/\r?\n/)
+            .map((ln) => ln.trim())
+            .filter(Boolean);
+    if (lines.length === 0) return;
+
     setGenerating(true);
     setPreview(null);
     setPreviewError(null);
     try {
-      const result = await api.generatePreview(selected.id, {
-        text: sampleText.trim(),
+      await api.generateCharacterClipsFromLines(selected.id, {
+        lines: lines.map((text) => ({
+          text,
+          tone_style: styleInput.trim() || "",
+        })),
+        style: styleInput.trim() || undefined,
+        clip_label_prefix: clipLabel.trim() || undefined,
         voice_id: selected.default_voice_id || undefined,
-        style: styleInput || undefined,
-        save_clip: true,
-        clip_title: clipLabel.trim() || undefined,
       });
-      setPreview(result);
       const rows = await api.listCharacterClips(selected.id);
       setClips(rows);
+      if (directInputMode === "multi_line") setDirectLinesInput("");
+      else setSampleText("");
     } catch (e) {
       setPreviewError(
-        e instanceof ApiError ? e.message : "Preview generation failed",
+        e instanceof ApiError ? e.message : "Direct clip generation failed",
       );
     } finally {
       setGenerating(false);
     }
   }
 
-  async function handleBatchGenerate() {
-    if (!selected) return;
-    if (!selected.default_voice_id) {
-      setPreviewError("Assign a voice first in Voice Setup.");
+  async function handleGenerateLinesFromPrompt() {
+    if (!selected || !promptInput.trim()) return;
+    const trimmed = promptInput.trim();
+    if (trimmed.length > SCENE_PROMPT_MAX_CHARS) {
+      setPreviewError(
+        `Scene prompt is too long (max ${SCENE_PROMPT_MAX_CHARS} characters).`,
+      );
       return;
     }
-    const lines = batchLinesInput
-      .split(/\r?\n/)
-      .map((ln) => ln.trim())
-      .filter(Boolean);
-    const payload =
-      batchInputMode === "prompt"
-        ? {
-            mode: "prompt" as const,
-            prompt: batchPromptInput.trim(),
-            count: Math.max(1, Math.min(12, batchCount || 1)),
-            style: styleInput.trim() || undefined,
-            clip_label_prefix: clipLabel.trim() || undefined,
-            voice_id: selected.default_voice_id || undefined,
-          }
-        : {
-            mode: "multi_line" as const,
-            lines,
-            style: styleInput.trim() || undefined,
-            clip_label_prefix: clipLabel.trim() || undefined,
-            voice_id: selected.default_voice_id || undefined,
-          };
+    setPromptLinesBusy(true);
+    setPreviewError(null);
+    try {
+      const res = await api.generateCharacterDraftLines(selected.id, {
+        prompt: trimmed,
+      });
+      setPromptLines(
+        res.lines.map((line, idx) => ({
+          id: `draft-${idx}-${Date.now()}`,
+          text: line.text,
+          tone_style: line.tone_style || "",
+        })),
+      );
+    } catch (e) {
+      setPreviewError(
+        e instanceof ApiError ? e.message : "Could not generate lines from prompt",
+      );
+    } finally {
+      setPromptLinesBusy(false);
+    }
+  }
+
+  async function handleGeneratePromptClips() {
+    if (!selected) return;
+    if (!selected.default_voice_id) {
+      setPreviewError("Assign a voice first in Voice setup.");
+      return;
+    }
+    const lines = promptLines
+      .map((x) => ({
+        text: x.text.trim(),
+        tone_style: (x.tone_style || "").trim(),
+      }))
+      .filter((x) => x.text);
+    if (lines.length === 0) {
+      setPreviewError("Generate and keep at least one line before audio generation.");
+      return;
+    }
     setGenerating(true);
     setPreview(null);
     setPreviewError(null);
     try {
-      await api.generateCharacterClips(selected.id, payload);
+      await api.generateCharacterClipsFromLines(selected.id, {
+        lines,
+        voice_id: selected.default_voice_id || undefined,
+      });
       const rows = await api.listCharacterClips(selected.id);
       setClips(rows);
-      if (batchInputMode === "multi_line") setBatchLinesInput("");
     } catch (e) {
       setPreviewError(
-        e instanceof ApiError ? e.message : "Batch clip generation failed",
+        e instanceof ApiError ? e.message : "Prompt clip generation failed",
       );
     } finally {
       setGenerating(false);
@@ -848,145 +907,259 @@ function VoiceStudioContent() {
                   <p className="text-xs leading-relaxed text-muted">
                     Use this character&apos;s assigned voice to create one or more clips.
                   </p>
-                  <div className="flex flex-wrap gap-2">
-                    {(["single", "batch"] as const).map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                          clipMode === m
-                            ? "bg-accent/20 text-text ring-1 ring-accent/35"
-                            : "bg-white/[0.04] text-muted hover:bg-white/[0.07]"
-                        }`}
-                        onClick={() => setClipMode(m)}
-                      >
-                        {m === "single" ? "Single clip" : "Batch clips"}
-                      </button>
-                    ))}
+
+                  {!showDirectTextAdvanced ? (
+                    <>
+                      <div className="space-y-3 rounded-lg bg-white/[0.02] p-3 ring-1 ring-white/[0.06]">
+                        <p className="text-xs leading-relaxed text-muted">
+                          Describe the scene or plot for this character. We will draft lines
+                          and tones for review.
+                        </p>
+                        <label className="block text-[11px] font-medium text-muted">
+                          Scene / plot prompt
+                        </label>
+                        <textarea
+                          className="w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                          rows={4}
+                          maxLength={SCENE_PROMPT_MAX_CHARS}
+                          placeholder="What is happening in the scene?"
+                          value={promptInput}
+                          onChange={(e) => {
+                            setPromptInput(e.target.value);
+                            setPreviewError(null);
+                          }}
+                        />
+                        <p className="text-right text-[10px] text-muted">
+                          {promptInput.length}/{SCENE_PROMPT_MAX_CHARS}
+                        </p>
+                        <Button
+                          variant="secondary"
+                          type="button"
+                          className="w-full"
+                          onClick={() => void handleGenerateLinesFromPrompt()}
+                          disabled={
+                            promptLinesBusy ||
+                            !promptInput.trim() ||
+                            promptInput.trim().length > SCENE_PROMPT_MAX_CHARS
+                          }
+                        >
+                          {promptLinesBusy ? (
+                            <>
+                              <Spinner className="h-4 w-4 border-t-text" />
+                              Generating draft lines…
+                            </>
+                          ) : (
+                            "Generate draft lines"
+                          )}
+                        </Button>
+                      </div>
+
+                      {promptLines.length > 0 ? (
+                        <div className="space-y-3 rounded-lg bg-white/[0.02] p-3 ring-1 ring-white/[0.06]">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[11px] font-medium text-muted">
+                              Review lines
+                            </p>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={() =>
+                                setPromptLines((prev) => [
+                                  ...prev,
+                                  { id: `manual-${Date.now()}`, text: "", tone_style: "" },
+                                ])
+                              }
+                            >
+                              Add line
+                            </Button>
+                          </div>
+                          <ul className="space-y-2">
+                            {promptLines.map((line) => (
+                              <li
+                                key={line.id}
+                                className="space-y-2 rounded-lg bg-white/[0.02] p-2 ring-1 ring-white/[0.06]"
+                              >
+                                <textarea
+                                  className="w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                                  rows={2}
+                                  placeholder="Line text"
+                                  value={line.text}
+                                  onChange={(e) =>
+                                    setPromptLines((prev) =>
+                                      prev.map((x) =>
+                                        x.id === line.id ? { ...x, text: e.target.value } : x,
+                                      ),
+                                    )
+                                  }
+                                />
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    className="flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                                    placeholder="Tone (suggested)"
+                                    value={line.tone_style}
+                                    onChange={(e) =>
+                                      setPromptLines((prev) =>
+                                        prev.map((x) =>
+                                          x.id === line.id
+                                            ? { ...x, tone_style: e.target.value }
+                                            : x,
+                                        ),
+                                      )
+                                    }
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    onClick={() =>
+                                      setPromptLines((prev) =>
+                                        prev.filter((x) => x.id !== line.id),
+                                      )
+                                    }
+                                  >
+                                    Remove
+                                  </Button>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                          <Button
+                            type="button"
+                            className="w-full"
+                            onClick={() => void handleGeneratePromptClips()}
+                            disabled={
+                              generating ||
+                              !selected.default_voice_id ||
+                              promptLines.filter((x) => x.text.trim()).length === 0
+                            }
+                          >
+                            {generating ? (
+                              <>
+                                <Spinner className="h-4 w-4 border-t-canvas" />
+                                Generating…
+                              </>
+                            ) : (
+                              <>
+                                <Play className="h-4 w-4" />
+                                Approve and generate audio
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      className="text-xs text-muted underline-offset-2 hover:text-text hover:underline"
+                      onClick={() => setShowDirectTextAdvanced((v) => !v)}
+                    >
+                      {showDirectTextAdvanced
+                        ? "Back to scene prompt flow"
+                        : "Use direct text instead"}
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-muted">
-                      Single clip text
-                    </label>
-                    <textarea
-                      className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                      rows={3}
-                      placeholder="Text for one clip"
-                      value={sampleText}
-                      onChange={(e) => setSampleText(e.target.value)}
-                    />
-                  </div>
-                  {clipMode === "batch" ? (
+
+                  {showDirectTextAdvanced ? (
                     <div className="space-y-3 rounded-lg bg-white/[0.02] p-3 ring-1 ring-white/[0.06]">
+                      <p className="text-[11px] text-muted">
+                        Advanced: enter exact lines to speak.
+                      </p>
                       <div className="flex flex-wrap gap-2">
-                        {(["multi_line", "prompt"] as const).map((m) => (
+                        {(["single_line", "multi_line"] as const).map((m) => (
                           <button
                             key={m}
                             type="button"
                             className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                              batchInputMode === m
+                              directInputMode === m
                                 ? "bg-accent/20 text-text ring-1 ring-accent/35"
                                 : "bg-white/[0.04] text-muted hover:bg-white/[0.07]"
                             }`}
-                            onClick={() => setBatchInputMode(m)}
+                            onClick={() => setDirectInputMode(m)}
                           >
-                            {m === "multi_line" ? "Multi-line text" : "Prompt to create lines"}
+                            {m === "single_line" ? "Single line" : "Multi-line"}
                           </button>
                         ))}
                       </div>
-                      {batchInputMode === "multi_line" ? (
-                        <textarea
-                          className="w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                          rows={4}
-                          placeholder="One clip line per row"
-                          value={batchLinesInput}
-                          onChange={(e) => setBatchLinesInput(e.target.value)}
-                        />
-                      ) : (
-                        <div className="space-y-2">
+                      {directInputMode === "single_line" ? (
+                        <div>
+                          <label className="block text-[11px] font-medium text-muted">
+                            Single line text
+                          </label>
                           <textarea
-                            className="w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                            className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
                             rows={3}
-                            placeholder="Generate 5 short excited greetings for this character"
-                            value={batchPromptInput}
-                            onChange={(e) => setBatchPromptInput(e.target.value)}
+                            placeholder="Text for one clip"
+                            value={sampleText}
+                            onChange={(e) => setSampleText(e.target.value)}
                           />
-                          <div>
-                            <label className="block text-[11px] font-medium text-muted">
-                              Number of clips
-                            </label>
-                            <input
-                              type="number"
-                              min={1}
-                              max={12}
-                              className="mt-1 w-28 rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                              value={batchCount}
-                              onChange={(e) => setBatchCount(Number(e.target.value) || 1)}
-                            />
-                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block text-[11px] font-medium text-muted">
+                            Multi-line input
+                          </label>
+                          <textarea
+                            className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                            rows={5}
+                            placeholder="One line per clip"
+                            value={directLinesInput}
+                            onChange={(e) => setDirectLinesInput(e.target.value)}
+                          />
                         </div>
                       )}
+                      <div>
+                        <label className="block text-[11px] font-medium text-muted">
+                          Tone / style for clips (optional)
+                        </label>
+                        <input
+                          className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                          placeholder="e.g. calm, urgent, dry"
+                          value={styleInput}
+                          onChange={(e) => setStyleInput(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-muted">
+                          Clip label prefix (optional)
+                        </label>
+                        <input
+                          className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                          placeholder="e.g. Greeting take 2"
+                          value={clipLabel}
+                          onChange={(e) => setClipLabel(e.target.value)}
+                        />
+                        <p className="mt-1 text-[10px] text-muted">
+                          Used only for organizing saved clips.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={() => void handleGenerateDirectClips()}
+                        disabled={
+                          generating ||
+                          !selected.default_voice_id ||
+                          (directInputMode === "single_line"
+                            ? !sampleText.trim()
+                            : !directLinesInput.trim())
+                        }
+                        className="w-full"
+                      >
+                        {generating ? (
+                          <>
+                            <Spinner className="h-4 w-4 border-t-canvas" />
+                            Generating…
+                          </>
+                        ) : (
+                          <>
+                            <Play className="h-4 w-4" />
+                            Generate audio clips
+                          </>
+                        )}
+                      </Button>
                     </div>
                   ) : null}
-                  <div>
-                    <label className="block text-[11px] font-medium text-muted">
-                      Tone / style hint (optional)
-                    </label>
-                    <input
-                      className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                      placeholder="e.g. calm, urgent, dry"
-                      value={styleInput}
-                      onChange={(e) => setStyleInput(e.target.value)}
-                    />
-                    <p className="mt-1 text-[10px] text-muted">
-                      Effect varies by provider and model.
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-muted">
-                      Clip label (optional)
-                    </label>
-                    <input
-                      className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                      placeholder="e.g. Greeting take 2"
-                      value={clipLabel}
-                      onChange={(e) => setClipLabel(e.target.value)}
-                    />
-                    <p className="mt-1 text-[10px] text-muted">
-                      Label is used only for organizing saved clips.
-                    </p>
-                  </div>
-                  <Button
-                    onClick={() =>
-                      void (clipMode === "single"
-                        ? handleGenerate()
-                        : handleBatchGenerate())
-                    }
-                    disabled={
-                      generating ||
-                      (clipMode === "single" && !sampleText.trim()) ||
-                      (clipMode === "batch" &&
-                        (batchInputMode === "multi_line"
-                          ? !batchLinesInput.trim()
-                          : !batchPromptInput.trim())) ||
-                      !selected.default_voice_id
-                    }
-                    className="w-full"
-                  >
-                    {generating ? (
-                      <>
-                        <Spinner className="h-4 w-4 border-t-canvas" />
-                        Generating…
-                      </>
-                    ) : (
-                      <>
-                        <Play className="h-4 w-4" />
-                        {clipMode === "single"
-                          ? "Generate and save clip"
-                          : "Generate and save clips"}
-                      </>
-                    )}
-                  </Button>
                   {previewError ? (
                     <ErrorBanner title="Generation failed" detail={previewError} />
                   ) : null}
@@ -1281,8 +1454,31 @@ function VoiceStudioContent() {
                     ) : null}
                     {designResult?.source === "fallback" &&
                     designResult.message ? (
-                      <p className="text-[11px] text-amber-400/90">
-                        {designResult.message}
+                      <div className="space-y-2">
+                        <p className="text-[11px] text-amber-400/90">
+                          {designResult.message}
+                        </p>
+                        <p className="text-[11px] text-muted">
+                          Try describing the sound and style rather than age labels.
+                        </p>
+                        {designResult.safe_example_prompts &&
+                        designResult.safe_example_prompts.length > 0 ? (
+                          <ul className="space-y-1 rounded-lg bg-white/[0.02] p-2 ring-1 ring-white/[0.06]">
+                            {designResult.safe_example_prompts
+                              .slice(0, 6)
+                              .map((sample) => (
+                                <li key={sample} className="text-[11px] text-muted">
+                                  {sample}
+                                </li>
+                              ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {designResult?.source === "elevenlabs" &&
+                    designResult.normalized_retry_used ? (
+                      <p className="text-[11px] text-muted">
+                        We adjusted the prompt for compatibility.
                       </p>
                     ) : null}
                     {designResult &&

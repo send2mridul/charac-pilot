@@ -26,6 +26,10 @@ class DesignVoiceResponse(BaseModel):
     message: str | None = None
     preview_text_used: str = ""
     candidates: list[VoicePreviewCandidateOut] = []
+    normalized_retry_used: bool = False
+    original_prompt: str | None = None
+    rewritten_prompt: str | None = None
+    safe_example_prompts: list[str] = []
 
 
 class SaveCustomVoiceBody(BaseModel):

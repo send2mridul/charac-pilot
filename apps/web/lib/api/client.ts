@@ -3,8 +3,11 @@ import { ApiError } from "./errors";
 import type {
   CharacterDto,
   DesignVoiceResponseDto,
+  DraftLineDto,
   EpisodeDto,
   GenerateClipsResponseDto,
+  GenerateDraftLinesResponseDto,
+  GenerateLinesResponseDto,
   JobDto,
   PreviewDto,
   ProjectDto,
@@ -340,6 +343,57 @@ export const api = {
   ) =>
     requestJson<GenerateClipsResponseDto>(
       `/characters/${characterId}/generate-clips`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
+  generateCharacterLines: (
+    characterId: string,
+    body: {
+      prompt: string;
+      count?: number;
+    },
+  ) =>
+    requestJson<GenerateLinesResponseDto>(
+      `/characters/${characterId}/generate-lines`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
+  generateCharacterDraftLines: (
+    characterId: string,
+    body: {
+      prompt: string;
+      count?: number;
+      style?: string;
+    },
+  ) =>
+    requestJson<GenerateDraftLinesResponseDto>(
+      `/characters/${characterId}/generate-draft-lines`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
+  generateCharacterClipsFromLines: (
+    characterId: string,
+    body: {
+      lines: Array<Pick<DraftLineDto, "text" | "tone_style">>;
+      style?: string;
+      clip_label_prefix?: string;
+      voice_id?: string;
+    },
+  ) =>
+    requestJson<GenerateClipsResponseDto>(
+      `/characters/${characterId}/generate-clips-from-lines`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
