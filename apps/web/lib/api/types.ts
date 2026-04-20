@@ -128,3 +128,22 @@ export type SpeakerGroupDto = {
   sample_texts: string[];
   is_narrator: boolean;
 };
+
+export type ReplacementDto = {
+  replacement_id: string;
+  episode_id: string;
+  segment_id: string;
+  character_id: string;
+  character_name: string;
+  selected_voice_id: string;
+  selected_voice_name: string;
+  original_text: string;
+  replacement_text: string;
+  tone_style: string | null;
+  generated_audio_path: string;
+  audio_url: string;
+  provider_used: string;
+  fallback_used: boolean;
+  created_at: string;
+  updated_at: string;
+};

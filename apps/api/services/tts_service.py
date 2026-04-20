@@ -155,3 +155,35 @@ def generate_preview(
         "text": text,
         "provider": provider,
     }
+
+
+def synthesize_line_to_file(
+    text: str,
+    voice_id: str | None,
+    style: str | None,
+    out_base_no_ext: Path,
+) -> tuple[int, str, bool, Path]:
+    """Write TTS to disk. Returns (duration_ms, provider, fallback_used, final_path)."""
+    key = _elevenlabs_key()
+    out_base_no_ext.parent.mkdir(parents=True, exist_ok=True)
+
+    if key:
+        out_mp3 = out_base_no_ext.with_suffix(".mp3")
+        try:
+            duration_ms = _generate_elevenlabs(text, voice_id, style, out_mp3)
+            log.info(
+                "synthesize_line_to_file elevenlabs path=%s dur_ms=%s",
+                out_mp3,
+                duration_ms,
+            )
+            return duration_ms, "elevenlabs", False, out_mp3
+        except Exception as e:
+            log.warning("synthesize_line_to_file elevenlabs failed, stub: %s", e)
+            out_wav = out_base_no_ext.with_suffix(".wav")
+            duration_ms = _generate_silent_wav(out_wav)
+            return duration_ms, "stub", True, out_wav
+
+    out_wav = out_base_no_ext.with_suffix(".wav")
+    duration_ms = _generate_silent_wav(out_wav)
+    log.info("synthesize_line_to_file stub (no API key) path=%s", out_wav)
+    return duration_ms, "stub", True, out_wav

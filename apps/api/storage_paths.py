@@ -11,6 +11,7 @@ UPLOADS_ROOT = STORAGE_ROOT / "uploads"
 
 def ensure_storage_dirs() -> None:
     UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
+    (STORAGE_ROOT / "replacements").mkdir(parents=True, exist_ok=True)
 
 
 def to_rel_storage_path(absolute: Path) -> str:

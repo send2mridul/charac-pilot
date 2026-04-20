@@ -6,9 +6,11 @@ from db.store import store
 from schemas.character import CharacterOut, CreateCharacterFromGroupBody
 from schemas.episode import EpisodeExportBody
 from schemas.job import JobOut
+from schemas.replacement import PatchReplacementBody, ReplaceSegmentBody, ReplacementOut
 from schemas.speaker_group import SpeakerGroupOut, SpeakerGroupRenameBody
 from schemas.transcript import TranscriptOut, TranscriptSegmentOut
 from services import character_service, episode_service, episode_transcript_service, job_service
+from services import replacement_service
 
 router = APIRouter()
 log = logging.getLogger("characpilot.episodes")
@@ -16,6 +18,12 @@ log = logging.getLogger("characpilot.episodes")
 
 def _episode_id(episode_id: str) -> str:
     return episode_id.strip()
+
+
+def _replacement_http_error(exc: ValueError) -> None:
+    msg = str(exc)
+    code = 404 if "not found" in msg.lower() else 400
+    raise HTTPException(status_code=code, detail=msg) from exc
 
 
 @router.get("/{episode_id}/transcript", response_model=TranscriptOut)
@@ -123,13 +131,67 @@ def create_character_from_group(episode_id: str, speaker_label: str, body: Creat
     )
 
 
-@router.post("/{episode_id}/segments/{segment_id}/replace", response_model=JobOut)
-def replace_segment(episode_id: str, segment_id: str):
+@router.get("/{episode_id}/replacements", response_model=list[ReplacementOut])
+def list_episode_replacements(episode_id: str):
     eid = _episode_id(episode_id)
+    log.info("GET /episodes/%s/replacements", eid)
     episode_service.ensure_uploaded_episode_in_memory(eid)
-    if not episode_service.get_episode(eid):
-        raise HTTPException(status_code=404, detail="Episode not found")
-    return job_service.create_replace_job(eid, segment_id.strip())
+    try:
+        rows = replacement_service.list_replacements(eid)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return rows
+
+
+@router.post("/{episode_id}/segments/{segment_id}/replace", response_model=ReplacementOut)
+def replace_segment(episode_id: str, segment_id: str, body: ReplaceSegmentBody):
+    eid = _episode_id(episode_id)
+    sid = segment_id.strip()
+    log.info(
+        "POST /episodes/%s/segments/%s/replace character_id=%s",
+        eid,
+        sid,
+        body.character_id,
+    )
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    try:
+        return replacement_service.create_replacement(
+            eid,
+            sid,
+            body.character_id.strip(),
+            body.replacement_text,
+            body.tone_style,
+        )
+    except ValueError as e:
+        _replacement_http_error(e)
+
+
+@router.patch("/{episode_id}/replacements/{replacement_id}", response_model=ReplacementOut)
+def patch_episode_replacement(
+    episode_id: str,
+    replacement_id: str,
+    body: PatchReplacementBody,
+):
+    eid = _episode_id(episode_id)
+    rid = replacement_id.strip()
+    log.info("PATCH /episodes/%s/replacements/%s", eid, rid)
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    try:
+        return replacement_service.patch_replacement(eid, rid, body)
+    except ValueError as e:
+        _replacement_http_error(e)
+
+
+@router.delete("/{episode_id}/replacements/{replacement_id}", status_code=204)
+def delete_episode_replacement(episode_id: str, replacement_id: str):
+    eid = _episode_id(episode_id)
+    rid = replacement_id.strip()
+    log.info("DELETE /episodes/%s/replacements/%s", eid, rid)
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    try:
+        replacement_service.delete_replacement(eid, rid)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.post("/{episode_id}/export", response_model=JobOut)

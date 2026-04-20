@@ -89,6 +89,25 @@ class SpeakerGroupRecord:
 
 
 @dataclass
+class ReplacementRecord:
+    replacement_id: str
+    episode_id: str
+    segment_id: str
+    character_id: str
+    character_name: str
+    selected_voice_id: str
+    selected_voice_name: str
+    original_text: str
+    replacement_text: str
+    tone_style: str | None
+    generated_audio_path: str
+    provider_used: str
+    fallback_used: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass
 class CharacterRecord:
     id: str
     project_id: str
@@ -168,6 +187,7 @@ class InMemoryStore:
         self.jobs: dict[str, JobRecord] = {}
         self.transcript_segments: dict[str, list[TranscriptSegmentRecord]] = {}
         self.speaker_groups: dict[str, list[SpeakerGroupRecord]] = {}
+        self.replacements: dict[str, list[ReplacementRecord]] = {}
 
         self._seed_episodes()
         self._seed_characters()
@@ -332,6 +352,48 @@ class InMemoryStore:
             had_ep_row,
         )
         self._persist_transcript_json(episode_id, segments, language)
+
+    def list_replacements(self, episode_id: str) -> list[ReplacementRecord]:
+        with self._lock:
+            return list(self.replacements.get(episode_id, []))
+
+    def add_replacement(self, rec: ReplacementRecord) -> ReplacementRecord:
+        with self._lock:
+            self.replacements.setdefault(rec.episode_id, []).append(rec)
+        return rec
+
+    def get_replacement(self, episode_id: str, replacement_id: str) -> ReplacementRecord | None:
+        with self._lock:
+            for r in self.replacements.get(episode_id, []):
+                if r.replacement_id == replacement_id:
+                    return r
+        return None
+
+    def update_replacement(
+        self,
+        episode_id: str,
+        replacement_id: str,
+        **fields: Any,
+    ) -> ReplacementRecord | None:
+        with self._lock:
+            for r in self.replacements.get(episode_id, []):
+                if r.replacement_id != replacement_id:
+                    continue
+                for key, val in fields.items():
+                    if hasattr(r, key):
+                        setattr(r, key, val)
+                return r
+        return None
+
+    def delete_replacement(self, episode_id: str, replacement_id: str) -> ReplacementRecord | None:
+        with self._lock:
+            lst = self.replacements.get(episode_id)
+            if not lst:
+                return None
+            for i, r in enumerate(lst):
+                if r.replacement_id == replacement_id:
+                    return lst.pop(i)
+        return None
 
     def list_transcript_segments(
         self,

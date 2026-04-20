@@ -1,116 +1,535 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import Image from "next/image";
-import { mockSceneReplace } from "@characpilot/shared";
-import { ArrowRight, Wand2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Clapperboard, Mic2, Trash2, Volume2, Wand2 } from "lucide-react";
 import { api } from "@/lib/api/client";
+import { mediaUrl } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
-import type { JobDto } from "@/lib/api/types";
+import type {
+  CharacterDto,
+  EpisodeDto,
+  ReplacementDto,
+  TranscriptSegmentDto,
+} from "@/lib/api/types";
+import { useProjects } from "@/components/providers/ProjectProvider";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Panel } from "@/components/ui/Panel";
-import { ProgressBar } from "@/components/ui/ProgressBar";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { Spinner } from "@/components/ui/Spinner";
+
+function formatTime(sec: number): string {
+  const s = Math.max(0, sec);
+  const m = Math.floor(s / 60);
+  const r = Math.floor(s % 60);
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
 
 export default function SceneReplacePage() {
-  const { pairs } = mockSceneReplace;
-  const [job, setJob] = useState<JobDto | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    projects,
+    activeProjectId,
+    setActiveProjectId,
+    loading: projectsLoading,
+  } = useProjects();
 
-  const poll = useCallback(async (jobId: string) => {
-    const j = await api.getJob(jobId);
-    setJob(j);
-    if (j.status === "queued" || j.status === "running") {
-      window.setTimeout(() => void poll(jobId), 400);
+  const [episodes, setEpisodes] = useState<EpisodeDto[]>([]);
+  const [epLoading, setEpLoading] = useState(false);
+  const [episodeId, setEpisodeId] = useState<string>("");
+
+  const [segments, setSegments] = useState<TranscriptSegmentDto[]>([]);
+  const [segLoading, setSegLoading] = useState(false);
+
+  const [characters, setCharacters] = useState<CharacterDto[]>([]);
+  const [charLoading, setCharLoading] = useState(false);
+
+  const [replacements, setReplacements] = useState<ReplacementDto[]>([]);
+  const [repLoading, setRepLoading] = useState(false);
+
+  const [selectedSegId, setSelectedSegId] = useState<string | null>(null);
+  const [characterId, setCharacterId] = useState<string>("");
+  const [replacementText, setReplacementText] = useState("");
+  const [toneStyle, setToneStyle] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [editingRepId, setEditingRepId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeProjectId) {
+      setEpisodes([]);
+      setEpisodeId("");
+      return;
+    }
+    let c = false;
+    setEpLoading(true);
+    api
+      .listEpisodes(activeProjectId)
+      .then((rows) => {
+        if (!c) setEpisodes(rows);
+      })
+      .catch(() => {
+        if (!c) setEpisodes([]);
+      })
+      .finally(() => {
+        if (!c) setEpLoading(false);
+      });
+    return () => {
+      c = true;
+    };
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!activeProjectId) {
+      setCharacters([]);
+      return;
+    }
+    let c = false;
+    setCharLoading(true);
+    api
+      .listCharacters(activeProjectId)
+      .then((rows) => {
+        if (!c) setCharacters(rows);
+      })
+      .catch(() => {
+        if (!c) setCharacters([]);
+      })
+      .finally(() => {
+        if (!c) setCharLoading(false);
+      });
+    return () => {
+      c = true;
+    };
+  }, [activeProjectId]);
+
+  const loadSegments = useCallback(async (eid: string) => {
+    setSegLoading(true);
+    setError(null);
+    try {
+      const rows = await api.listEpisodeTranscriptSegments(eid);
+      setSegments(rows);
+    } catch (e) {
+      setSegments([]);
+      setError(e instanceof ApiError ? e.message : "Could not load segments");
+    } finally {
+      setSegLoading(false);
     }
   }, []);
 
-  async function runStubReplace() {
+  const loadReplacements = useCallback(async (eid: string) => {
+    setRepLoading(true);
+    try {
+      const rows = await api.listEpisodeReplacements(eid);
+      setReplacements(rows);
+    } catch {
+      setReplacements([]);
+    } finally {
+      setRepLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!episodeId) {
+      setSegments([]);
+      setReplacements([]);
+      setSelectedSegId(null);
+      setEditingRepId(null);
+      return;
+    }
+    setEditingRepId(null);
+    void loadSegments(episodeId);
+    void loadReplacements(episodeId);
+  }, [episodeId, loadSegments, loadReplacements]);
+
+  const selectedSeg = segments.find((s) => s.segment_id === selectedSegId) ?? null;
+  const selectedChar = characters.find((c) => c.id === characterId) ?? null;
+
+  useEffect(() => {
+    if (editingRepId) return;
+    if (!selectedSegId) return;
+    const seg = segments.find((s) => s.segment_id === selectedSegId);
+    if (seg) setReplacementText(seg.text);
+  }, [selectedSegId, segments, editingRepId]);
+
+  async function handleGenerate() {
+    if (!episodeId || !selectedSegId || !characterId || !replacementText.trim()) {
+      return;
+    }
+    if (!selectedChar?.default_voice_id) {
+      setError("This character has no assigned voice. Set one in Voice Studio first.");
+      return;
+    }
+    setGenerating(true);
     setError(null);
     try {
-      const j = await api.replaceSegment("ep1", "seg_001");
-      setJob(j);
-      void poll(j.id);
+      if (editingRepId) {
+        const updated = await api.patchEpisodeReplacement(
+          episodeId,
+          editingRepId,
+          {
+            replacement_text: replacementText.trim(),
+            tone_style: toneStyle.trim() || undefined,
+            regenerate_audio: true,
+          },
+        );
+        setReplacements((prev) =>
+          prev.map((r) => (r.replacement_id === updated.replacement_id ? updated : r)),
+        );
+        setEditingRepId(null);
+      } else {
+        const created = await api.createSegmentReplacement(
+          episodeId,
+          selectedSegId,
+          {
+            character_id: characterId,
+            replacement_text: replacementText.trim(),
+            tone_style: toneStyle.trim() || undefined,
+          },
+        );
+        setReplacements((prev) => [created, ...prev]);
+      }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Replace failed");
+      setError(
+        e instanceof ApiError ? e.message : "Could not generate replacement",
+      );
+    } finally {
+      setGenerating(false);
     }
   }
+
+  async function handleDelete(rep: ReplacementDto) {
+    if (!episodeId) return;
+    if (!globalThis.confirm("Delete this replacement?")) return;
+    setError(null);
+    try {
+      await api.deleteEpisodeReplacement(episodeId, rep.replacement_id);
+      setReplacements((prev) =>
+        prev.filter((r) => r.replacement_id !== rep.replacement_id),
+      );
+      if (editingRepId === rep.replacement_id) {
+        setEditingRepId(null);
+      }
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Delete failed");
+    }
+  }
+
+  function startEdit(rep: ReplacementDto) {
+    setEditingRepId(rep.replacement_id);
+    setSelectedSegId(rep.segment_id);
+    setCharacterId(rep.character_id);
+    setReplacementText(rep.replacement_text);
+    setToneStyle(rep.tone_style ?? "");
+  }
+
+  const active = projects.find((p) => p.id === activeProjectId);
 
   return (
     <div className="space-y-10">
       <PageHeader
         title="Scene Replace"
-        subtitle="Visual compare uses fixtures. “Preview swap” hits POST /episodes/{id}/segments/{segment_id}/replace for ep1 / seg_001."
-        actions={
-          <>
-            <Button variant="secondary">Load EDL</Button>
-            <Button onClick={() => void runStubReplace()}>
-              <Wand2 className="h-4 w-4" />
-              Preview swap (API)
-            </Button>
-          </>
-        }
+        subtitle="Pick a transcript segment, choose a saved character voice, and generate replacement dialogue audio."
       />
 
-      {error ? <ErrorBanner title="Replace" detail={error} /> : null}
+      {error ? <ErrorBanner title="Scene replace" detail={error} /> : null}
 
-      {job ? (
-        <Panel>
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold text-text">Job</h2>
-            <Badge tone="accent">{job.status}</Badge>
-          </div>
-          <p className="mt-2 text-sm text-muted">{job.message}</p>
-          <ProgressBar value={job.progress} className="mt-3" />
-        </Panel>
-      ) : null}
+      <Panel>
+        <label className="block text-xs font-semibold uppercase tracking-wide text-muted">
+          Project
+        </label>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <select
+            className="min-w-[220px] rounded-xl border border-white/[0.08] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40 focus:ring-2 focus:ring-accent/20"
+            value={activeProjectId ?? ""}
+            disabled={projectsLoading || projects.length === 0}
+            onChange={(e) => setActiveProjectId(e.target.value)}
+          >
+            {projects.length === 0 ? (
+              <option value="">No projects</option>
+            ) : (
+              projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))
+            )}
+          </select>
+          {active ? (
+            <span className="text-xs text-muted">{active.scene_count} scenes</span>
+          ) : null}
+        </div>
+      </Panel>
 
-      <div className="space-y-6">
-        {pairs.map((pair) => (
-          <Panel key={pair.id}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-text">{pair.shot}</h2>
-                <p className="mt-1 text-sm text-muted">{pair.note}</p>
-              </div>
-              <Badge tone="accent">Storyboard</Badge>
+      {!activeProjectId ? (
+        <EmptyState
+          icon={Clapperboard}
+          title="Choose a project"
+          description="Select a project to load episodes and transcript segments."
+        />
+      ) : (
+        <div className="grid gap-6 xl:grid-cols-2">
+          <Panel>
+            <h2 className="text-sm font-semibold text-text">Episode & segments</h2>
+            <div className="mt-3">
+              <label className="text-[11px] font-medium text-muted">Episode</label>
+              <select
+                className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
+                value={episodeId}
+                disabled={epLoading}
+                onChange={(e) => {
+                  setEpisodeId(e.target.value);
+                  setSelectedSegId(null);
+                  setEditingRepId(null);
+                }}
+              >
+                <option value="">— Select episode —</option>
+                {episodes.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.title} ({e.segment_count} segments)
+                  </option>
+                ))}
+              </select>
             </div>
-            <div className="mt-4 grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-center">
-              <div className="overflow-hidden rounded-xl ring-1 ring-white/10">
-                <Image
-                  src={pair.beforeThumb}
-                  alt={`Before ${pair.shot}`}
-                  width={640}
-                  height={360}
-                  className="h-auto w-full bg-panel"
-                />
-                <p className="bg-panel/90 px-3 py-2 text-xs text-muted">
-                  Before
-                </p>
-              </div>
-              <div className="flex justify-center md:px-2">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.05] ring-1 ring-white/10">
-                  <ArrowRight className="h-5 w-5 text-accent" />
+            {segLoading ? (
+              <Skeleton className="mt-4 h-40 w-full" />
+            ) : episodeId && segments.length === 0 ? (
+              <p className="mt-4 text-sm text-muted">
+                No transcript segments yet. Upload and process a video in Upload /
+                Match first.
+              </p>
+            ) : (
+              <ul className="mt-4 max-h-[360px] space-y-1 overflow-y-auto rounded-lg ring-1 ring-white/[0.06]">
+                {segments.map((s) => {
+                  const on = selectedSegId === s.segment_id;
+                  return (
+                    <li key={s.segment_id}>
+                      <button
+                        type="button"
+                        className={`w-full px-3 py-2.5 text-left text-sm transition ${
+                          on
+                            ? "bg-accent/15 text-text"
+                            : "hover:bg-white/[0.03] text-muted"
+                        }`}
+                        onClick={() => {
+                          setSelectedSegId(s.segment_id);
+                          setEditingRepId(null);
+                        }}
+                      >
+                        <span className="font-mono text-[11px] text-muted">
+                          {formatTime(s.start_time)}–{formatTime(s.end_time)}
+                        </span>
+                        {s.speaker_label ? (
+                          <span className="ml-2 inline-block align-middle">
+                            <Badge tone="default">{s.speaker_label}</Badge>
+                          </span>
+                        ) : null}
+                        <p className="mt-1 line-clamp-2 text-text">{s.text}</p>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Panel>
+
+          <Panel>
+            <h2 className="text-sm font-semibold text-text">
+              Replacement line
+              {editingRepId ? (
+                <span className="ml-2 text-xs font-normal text-accent">
+                  (editing {editingRepId})
+                </span>
+              ) : null}
+            </h2>
+            {!selectedSeg ? (
+              <p className="mt-6 text-sm text-muted">
+                Select a segment from the list to replace dialogue.
+              </p>
+            ) : (
+              <div className="mt-4 space-y-4">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase text-muted">
+                    Original
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed text-text">
+                    {selectedSeg.text}
+                  </p>
+                  {selectedSeg.speaker_label ? (
+                    <p className="mt-1 text-xs text-muted">
+                      Speaker: {selectedSeg.speaker_label}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold uppercase text-muted">
+                    Character (project)
+                  </label>
+                  <select
+                    className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
+                    value={characterId}
+                    disabled={charLoading}
+                    onChange={(e) => setCharacterId(e.target.value)}
+                  >
+                    <option value="">— Choose character —</option>
+                    {characters.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                        {!c.default_voice_id ? " (no voice)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedChar && !selectedChar.default_voice_id ? (
+                    <p className="mt-2 text-xs text-amber-400">
+                      This character has no assigned voice. Open Voice Studio to assign
+                      a voice before generating.
+                    </p>
+                  ) : null}
+                  {selectedChar && selectedChar.default_voice_id ? (
+                    <p className="mt-1 text-xs text-muted">
+                      Voice:{" "}
+                      <span className="text-text">
+                        {selectedChar.voice_display_name || selectedChar.default_voice_id}
+                      </span>
+                    </p>
+                  ) : null}
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold uppercase text-muted">
+                    Replacement text
+                  </label>
+                  <textarea
+                    className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
+                    rows={4}
+                    value={replacementText}
+                    onChange={(e) => setReplacementText(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold uppercase text-muted">
+                    Tone / style (optional)
+                  </label>
+                  <input
+                    className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
+                    value={toneStyle}
+                    onChange={(e) => setToneStyle(e.target.value)}
+                    placeholder="e.g. whisper, urgent, dry"
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    onClick={() => void handleGenerate()}
+                    disabled={
+                      generating ||
+                      !episodeId ||
+                      !characterId ||
+                      !replacementText.trim() ||
+                      !selectedChar?.default_voice_id
+                    }
+                  >
+                    {generating ? (
+                      <>
+                        <Spinner className="h-4 w-4 border-t-canvas" />
+                        Generating…
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 className="h-4 w-4" />
+                        {editingRepId ? "Regenerate" : "Generate replacement"}
+                      </>
+                    )}
+                  </Button>
+                  {editingRepId ? (
+                    <Button
+                      variant="secondary"
+                      type="button"
+                      onClick={() => {
+                        setEditingRepId(null);
+                        if (selectedSeg) setReplacementText(selectedSeg.text);
+                      }}
+                    >
+                      Cancel edit
+                    </Button>
+                  ) : null}
                 </div>
               </div>
-              <div className="overflow-hidden rounded-xl ring-1 ring-white/10">
-                <Image
-                  src={pair.afterThumb}
-                  alt={`After ${pair.shot}`}
-                  width={640}
-                  height={360}
-                  className="h-auto w-full bg-panel"
-                />
-                <p className="bg-panel/90 px-3 py-2 text-xs text-muted">
-                  After
-                </p>
-              </div>
-            </div>
+            )}
           </Panel>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {activeProjectId && episodeId ? (
+        <Panel>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-text">
+              Saved replacements ({replacements.length})
+            </h2>
+            {repLoading ? (
+              <Spinner className="h-4 w-4 border-t-accent" />
+            ) : null}
+          </div>
+          {replacements.length === 0 && !repLoading ? (
+            <p className="mt-3 text-sm text-muted">
+              No replacements yet for this episode. Generate one above.
+            </p>
+          ) : (
+            <ul className="mt-4 space-y-4">
+              {replacements.map((r) => (
+                <li
+                  key={r.replacement_id}
+                  className="rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/[0.06]"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-mono text-muted">
+                        Segment {r.segment_id.slice(0, 12)}… · {r.character_name}
+                      </p>
+                      <p className="mt-1 text-sm text-text">
+                        &ldquo;{r.replacement_text}&rdquo;
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted">
+                        <span>Voice: {r.selected_voice_name}</span>
+                        <Badge tone={r.fallback_used ? "default" : "success"}>
+                          {r.fallback_used ? "fallback audio" : r.provider_used}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        onClick={() => startEdit(r)}
+                      >
+                        <Mic2 className="h-4 w-4" />
+                        Edit
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        onClick={() => void handleDelete(r)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <audio
+                    controls
+                    className="mt-3 w-full max-w-md"
+                    src={mediaUrl(r.audio_url.replace(/^\/media\//, ""))}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      ) : null}
     </div>
   );
 }

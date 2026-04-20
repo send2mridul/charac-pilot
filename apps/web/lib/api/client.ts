@@ -12,6 +12,7 @@ import type {
   UploadCreateResponse,
   VoiceCatalogItem,
   VoiceCatalogResponse,
+  ReplacementDto,
 } from "./types";
 
 export { ApiError } from "./errors";
@@ -201,15 +202,56 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  replaceSegment: (episodeId: string, segmentId: string) =>
-    requestJson<JobDto>(
-      `/episodes/${episodeId}/segments/${segmentId}/replace`,
+  listEpisodeReplacements: (episodeId: string) =>
+    requestJson<ReplacementDto[]>(`/episodes/${episodeId}/replacements`),
+
+  createSegmentReplacement: (
+    episodeId: string,
+    segmentId: string,
+    body: { character_id: string; replacement_text: string; tone_style?: string },
+  ) =>
+    requestJson<ReplacementDto>(
+      `/episodes/${episodeId}/segments/${encodeURIComponent(segmentId)}/replace`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(body),
       },
     ),
+
+  patchEpisodeReplacement: (
+    episodeId: string,
+    replacementId: string,
+    body: {
+      replacement_text?: string;
+      tone_style?: string;
+      regenerate_audio?: boolean;
+    },
+  ) =>
+    requestJson<ReplacementDto>(
+      `/episodes/${episodeId}/replacements/${encodeURIComponent(replacementId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
+  deleteEpisodeReplacement: async (
+    episodeId: string,
+    replacementId: string,
+  ): Promise<void> => {
+    const url = `${getPublicApiBaseUrl()}/episodes/${episodeId}/replacements/${encodeURIComponent(replacementId)}`;
+    const res = await fetch(url, {
+      method: "DELETE",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new ApiError(`API ${res.status} for DELETE replacement`, res.status, text);
+    }
+  },
 
   exportEpisode: (episodeId: string) =>
     requestJson<JobDto>(`/episodes/${episodeId}/export`, {
