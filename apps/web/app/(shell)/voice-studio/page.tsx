@@ -123,6 +123,24 @@ function VoiceStudioContent() {
   }, [searchParams]);
 
   useEffect(() => {
+    if (!selectedId) return;
+    const panel = (searchParams.get("panel") || "").trim().toLowerCase();
+    const tabParam = (searchParams.get("tab") || "").trim().toLowerCase();
+
+    if (panel === "voice") {
+      setEditingVoice(true);
+      setShowClipGenerator(false);
+    } else if (panel === "clips") {
+      setEditingVoice(false);
+      setShowClipGenerator(true);
+    }
+
+    if (tabParam === "browse" || tabParam === "design" || tabParam === "remix") {
+      setTab(tabParam as StudioTab);
+    }
+  }, [searchParams, selectedId]);
+
+  useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(voiceSearchInput.trim()), 320);
     return () => clearTimeout(t);
   }, [voiceSearchInput]);

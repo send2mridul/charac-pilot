@@ -170,6 +170,19 @@ export default function CharactersPage() {
     if (!character.default_voice_id) return;
     setPreviewingVoiceId(character.id);
     try {
+      // Prefer the character's saved preview audio, which reflects the assigned voice.
+      const existingPreview = (character.preview_audio_path || "").trim();
+      if (existingPreview) {
+        if (previewAudioRef.current) {
+          previewAudioRef.current.pause();
+        }
+        const rel = existingPreview.replace(/^\/media\//, "");
+        const audio = new Audio(mediaUrl(rel));
+        previewAudioRef.current = audio;
+        await audio.play();
+        return;
+      }
+
       const text =
         character.sample_texts.find((line) => line.trim()) ||
         `Hello, this is ${character.name}.`;
@@ -519,7 +532,7 @@ export default function CharactersPage() {
                         Play voice
                       </Button>
                       <Link
-                        href={`/voice-studio?character=${encodeURIComponent(c.id)}`}
+                        href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=voice&tab=browse`}
                         className={buttonClass(
                           "secondary",
                           "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs",
@@ -529,7 +542,7 @@ export default function CharactersPage() {
                         {c.default_voice_id ? "Change voice" : "Attach voice"}
                       </Link>
                       <Link
-                        href={`/voice-studio?character=${encodeURIComponent(c.id)}`}
+                        href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=clips`}
                         className={buttonClass(
                           "outline",
                           "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs",
