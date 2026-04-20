@@ -1,6 +1,12 @@
 """CharacPilot API entrypoint."""
 
 import logging
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load apps/api/.env for local dev (never commit secrets)
+load_dotenv(Path(__file__).resolve().parent / ".env")
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI

@@ -25,6 +25,26 @@ def _elevenlabs_key() -> str | None:
     return os.environ.get("ELEVENLABS_API_KEY") or None
 
 
+# Map built-in catalog voice_id values to ElevenLabs premade voice IDs.
+# (Catalog labels are not valid ElevenLabs IDs by themselves.)
+_CATALOG_TO_ELEVENLABS: dict[str, str] = {
+    "warm_female": "EXAVITQu4vr4xnSDxMaL",  # Bella
+    "young_male": "ErXwobaYiN019PkySvjV",  # Antoni
+    "narrator_deep": "VR6AewLTigWG4xSOukaG",  # Arnold
+    "cute_child": "MF3mGyEYCl7XYWbV9V6O",  # Elli
+    "villain_dark": "AZnzlk1XvdvUeBnXmlld",  # Domi
+}
+
+
+def _resolve_elevenlabs_voice_id(voice_id: str | None) -> str:
+    """Use catalog mapping or pass through a raw ElevenLabs voice id."""
+    if not voice_id:
+        return "21m00Tcm4TlvDq8ikWAM"  # Rachel
+    if voice_id in _CATALOG_TO_ELEVENLABS:
+        return _CATALOG_TO_ELEVENLABS[voice_id]
+    return voice_id
+
+
 def _generate_silent_wav(path: Path, duration_sec: float = 2.0) -> int:
     """Write a short silent WAV and return duration in ms."""
     sr = 22050
@@ -52,11 +72,12 @@ def _generate_elevenlabs(
     if not key:
         raise RuntimeError("ELEVENLABS_API_KEY not set")
 
-    vid = voice_id or "21m00Tcm4TlvDq8ikWAM"  # default "Rachel"
+    vid = _resolve_elevenlabs_voice_id(voice_id)
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}"
+    model_id = os.environ.get("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2"
     payload = _json.dumps({
         "text": text,
-        "model_id": "eleven_monolingual_v1",
+        "model_id": model_id,
         "voice_settings": {
             "stability": 0.5,
             "similarity_boost": 0.75,

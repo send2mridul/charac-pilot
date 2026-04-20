@@ -6,3 +6,4 @@ faster-whisper>=1.1.0
 librosa>=0.10.0
 scikit-learn>=1.4.0
 soundfile>=0.12.0
+python-dotenv>=1.0.0
