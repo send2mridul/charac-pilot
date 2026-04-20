@@ -31,7 +31,17 @@ export type CharacterDto = {
   sample_texts: string[];
   is_narrator: boolean;
   default_voice_id: string | null;
+  voice_provider: string | null;
+  voice_display_name: string | null;
   voice_style_presets: Record<string, unknown> | null;
+  preview_audio_path: string | null;
+};
+
+export type VoiceCatalogItem = {
+  voice_id: string;
+  display_name: string;
+  description: string;
+  suggested_use: string;
 };
 
 export type PreviewDto = {

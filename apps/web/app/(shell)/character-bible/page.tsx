@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BookOpen, ImageIcon, Mic2 } from "lucide-react";
+import { BookOpen, ImageIcon, Mic2, Volume2 } from "lucide-react";
+import Link from "next/link";
 import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { CharacterDto } from "@/lib/api/types";
@@ -159,16 +160,32 @@ export default function CharacterBiblePage() {
                   </div>
                 ) : null}
 
-                {c.default_voice_id ? (
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                      Voice
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    Voice
+                  </p>
+                  {c.default_voice_id ? (
+                    <div className="mt-1 flex items-center gap-2">
+                      <Volume2 className="h-3.5 w-3.5 text-green-400" />
+                      <span className="text-xs font-medium text-text">
+                        {c.voice_display_name || c.default_voice_id}
+                      </span>
+                      {c.voice_provider ? (
+                        <Badge tone="success">{c.voice_provider}</Badge>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-xs text-muted/60">
+                      No voice assigned
                     </p>
-                    <p className="mt-1 font-mono text-xs text-muted">
-                      {c.default_voice_id}
-                    </p>
-                  </div>
-                ) : null}
+                  )}
+                  <Link
+                    href="/voice-studio"
+                    className="mt-2 inline-block text-[11px] font-medium text-accent hover:underline"
+                  >
+                    {c.default_voice_id ? "Change in Voice Studio →" : "Assign in Voice Studio →"}
+                  </Link>
+                </div>
 
                 {c.sample_texts.length > 0 ? (
                   <div>

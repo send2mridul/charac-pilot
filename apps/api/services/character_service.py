@@ -77,5 +77,8 @@ def _to_out(c: CharacterRecord) -> CharacterOut:
         sample_texts=c.sample_texts,
         is_narrator=c.is_narrator,
         default_voice_id=c.default_voice_id,
+        voice_provider=c.voice_provider,
+        voice_display_name=c.voice_display_name,
         voice_style_presets=c.voice_style_presets,
+        preview_audio_path=c.preview_audio_path,
     )

@@ -10,6 +10,7 @@ import type {
   TranscriptDto,
   TranscriptSegmentDto,
   UploadCreateResponse,
+  VoiceCatalogItem,
 } from "./types";
 
 export { ApiError } from "./errors";
@@ -164,11 +165,17 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  queueVoice: (characterId: string) =>
-    requestJson<JobDto>(`/characters/${characterId}/voice`, {
+  listVoiceCatalog: () =>
+    requestJson<VoiceCatalogItem[]>("/voices/catalog"),
+
+  assignVoice: (
+    characterId: string,
+    body: { voice_id: string; provider?: string; display_name?: string },
+  ) =>
+    requestJson<CharacterDto>(`/characters/${characterId}/voice`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify(body),
     }),
 
   replaceSegment: (episodeId: string, segmentId: string) =>

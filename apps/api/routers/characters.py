@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from schemas.character import (
+    AssignVoiceBody,
     CharacterOut,
     GenerateBody,
     GeneratePreviewBody,
@@ -41,11 +42,22 @@ def patch_character(character_id: str, body: PatchCharacterBody):
     return updated
 
 
-@router.post("/{character_id}/voice", response_model=JobOut)
-def queue_voice(character_id: str, _body: VoiceBody | None = None):
-    if not character_service.get_character(character_id):
+@router.post("/{character_id}/voice", response_model=CharacterOut)
+def assign_voice(character_id: str, body: AssignVoiceBody):
+    """Save a voice from the catalog (or custom ID) as the character's default voice."""
+    log.info("POST /characters/%s/voice voice_id=%s", character_id, body.voice_id)
+    c = character_service.get_character(character_id)
+    if not c:
         raise HTTPException(status_code=404, detail="Character not found")
-    return job_service.create_voice_job(character_id)
+    updated = character_service.update_character(
+        character_id,
+        default_voice_id=body.voice_id,
+        voice_provider=body.provider or "catalog",
+        voice_display_name=body.display_name or body.voice_id,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return updated
 
 
 @router.post("/{character_id}/generate", response_model=JobOut)
@@ -71,4 +83,5 @@ def generate_preview_endpoint(character_id: str, body: GeneratePreviewBody):
     except Exception as e:
         log.exception("generate-preview failed character_id=%s", character_id)
         raise HTTPException(status_code=500, detail=str(e)[:300]) from e
+    character_service.update_character(character_id, preview_audio_path=result["audio_url"])
     return PreviewOut(**result)

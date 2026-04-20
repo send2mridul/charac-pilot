@@ -105,7 +105,10 @@ class CharacterRecord:
     thumbnail_paths: list[str] = field(default_factory=list)
     is_narrator: bool = False
     default_voice_id: str | None = None
+    voice_provider: str | None = None
+    voice_display_name: str | None = None
     voice_style_presets: dict[str, Any] | None = None
+    preview_audio_path: str | None = None
 
 
 @dataclass

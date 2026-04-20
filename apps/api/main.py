@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from routers import characters, episodes, health, jobs, projects
+from routers import characters, episodes, health, jobs, projects, voices
 from services.ffmpeg_bin import log_ffmpeg_detection
 from storage_paths import STORAGE_ROOT, ensure_storage_dirs
 
@@ -45,6 +45,7 @@ app.include_router(projects.router, prefix="/projects", tags=["projects"])
 app.include_router(characters.router, prefix="/characters", tags=["characters"])
 app.include_router(episodes.router, prefix="/episodes", tags=["episodes"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
+app.include_router(voices.router, prefix="/voices", tags=["voices"])
 
 STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(STORAGE_ROOT)), name="media")

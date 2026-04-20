@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Mic2, Play, SlidersHorizontal, Volume2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Mic2, Play, Volume2 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { mediaUrl } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
-import type { CharacterDto, PreviewDto } from "@/lib/api/types";
+import type { CharacterDto, PreviewDto, VoiceCatalogItem } from "@/lib/api/types";
 import { useProjects } from "@/components/providers/ProjectProvider";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -19,67 +19,75 @@ import { Spinner } from "@/components/ui/Spinner";
 export default function VoiceStudioPage() {
   const { activeProjectId } = useProjects();
   const [characters, setCharacters] = useState<CharacterDto[]>([]);
+  const [catalog, setCatalog] = useState<VoiceCatalogItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [voiceIdInput, setVoiceIdInput] = useState("");
+  const [chosenVoiceId, setChosenVoiceId] = useState<string>("");
   const [sampleText, setSampleText] = useState("");
   const [styleInput, setStyleInput] = useState("");
   const [generating, setGenerating] = useState(false);
   const [preview, setPreview] = useState<PreviewDto | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
-  useEffect(() => {
+  const loadData = useCallback(async () => {
     if (!activeProjectId) {
       setCharacters([]);
       return;
     }
-    let cancelled = false;
     setLoading(true);
     setError(null);
-    api
-      .listCharacters(activeProjectId)
-      .then((rows) => {
-        if (!cancelled) setCharacters(rows);
-      })
-      .catch((e) => {
-        if (!cancelled)
-          setError(e instanceof ApiError ? e.message : "Load failed");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const [chars, voices] = await Promise.all([
+        api.listCharacters(activeProjectId),
+        api.listVoiceCatalog(),
+      ]);
+      setCharacters(chars);
+      setCatalog(voices);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to load data");
+    } finally {
+      setLoading(false);
+    }
   }, [activeProjectId]);
+
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
 
   const selected = characters.find((c) => c.id === selectedId) ?? null;
 
   useEffect(() => {
     if (!selected) return;
-    setVoiceIdInput(selected.default_voice_id ?? "");
+    setChosenVoiceId(selected.default_voice_id ?? "");
     setSampleText(selected.sample_texts[0] ?? "");
     setStyleInput("");
     setPreview(null);
     setPreviewError(null);
+    setSaveSuccess(false);
   }, [selectedId]);
 
-  async function handleSaveVoice() {
-    if (!selected) return;
+  async function handleAssignVoice() {
+    if (!selected || !chosenVoiceId) return;
     setSaving(true);
     setError(null);
+    setSaveSuccess(false);
     try {
-      const updated = await api.patchCharacter(selected.id, {
-        default_voice_id: voiceIdInput || null,
+      const catalogItem = catalog.find((v) => v.voice_id === chosenVoiceId);
+      const updated = await api.assignVoice(selected.id, {
+        voice_id: chosenVoiceId,
+        provider: "catalog",
+        display_name: catalogItem?.display_name ?? chosenVoiceId,
       });
       setCharacters((prev) =>
         prev.map((c) => (c.id === updated.id ? updated : c)),
       );
+      setSaveSuccess(true);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Save failed");
+      setError(e instanceof ApiError ? e.message : "Failed to assign voice");
     } finally {
       setSaving(false);
     }
@@ -93,7 +101,7 @@ export default function VoiceStudioPage() {
     try {
       const result = await api.generatePreview(selected.id, {
         text: sampleText.trim(),
-        voice_id: voiceIdInput || undefined,
+        voice_id: chosenVoiceId || undefined,
         style: styleInput || undefined,
       });
       setPreview(result);
@@ -110,13 +118,7 @@ export default function VoiceStudioPage() {
     <div className="space-y-10">
       <PageHeader
         title="Voice Studio"
-        subtitle="Select a character, assign a voice ID, and generate TTS preview lines."
-        actions={
-          <Button variant="secondary">
-            <SlidersHorizontal className="h-4 w-4" />
-            Mix presets
-          </Button>
-        }
+        subtitle="Assign AI voices to characters and generate preview speech with tone/style."
       />
 
       {error ? <ErrorBanner title="Voice studio" detail={error} /> : null}
@@ -136,13 +138,13 @@ export default function VoiceStudioPage() {
           description="Create characters from speaker groups in Upload / Match first."
         />
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Character selection list */}
+        <div className="grid gap-6 lg:grid-cols-[1fr_1.5fr]">
+          {/* Character list */}
           <Panel>
             <h2 className="text-sm font-semibold text-text">
               Characters ({characters.length})
             </h2>
-            <ul className="mt-4 max-h-[500px] space-y-2 overflow-y-auto">
+            <ul className="mt-4 max-h-[560px] space-y-2 overflow-y-auto">
               {characters.map((c) => (
                 <li key={c.id}>
                   <button
@@ -162,7 +164,9 @@ export default function VoiceStudioPage() {
                           <Badge tone="violet">Narrator</Badge>
                         ) : null}
                         {c.default_voice_id ? (
-                          <Badge tone="success">Voice set</Badge>
+                          <Badge tone="success">
+                            {c.voice_display_name || c.default_voice_id}
+                          </Badge>
                         ) : (
                           <Badge tone="default">No voice</Badge>
                         )}
@@ -183,11 +187,12 @@ export default function VoiceStudioPage() {
               <div className="flex min-h-[300px] flex-col items-center justify-center text-center">
                 <Volume2 className="h-10 w-10 text-muted" />
                 <p className="mt-4 text-sm text-muted">
-                  Select a character to configure voice and generate previews.
+                  Select a character to assign a voice and generate preview speech.
                 </p>
               </div>
             ) : (
               <div className="space-y-6">
+                {/* Header */}
                 <div>
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="text-lg font-semibold text-text">
@@ -201,45 +206,67 @@ export default function VoiceStudioPage() {
                     {selected.source_speaker_labels.join(", ") || "Manual entry"}{" "}
                     · {selected.segment_count} segments
                   </p>
+                  {selected.voice_display_name ? (
+                    <p className="mt-2 text-xs text-muted">
+                      Current voice:{" "}
+                      <span className="font-medium text-text">
+                        {selected.voice_display_name}
+                      </span>
+                      {selected.voice_provider ? (
+                        <span className="ml-1 text-muted">
+                          ({selected.voice_provider})
+                        </span>
+                      ) : null}
+                    </p>
+                  ) : null}
                 </div>
 
-                {/* Voice ID */}
+                {/* Voice catalog picker */}
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wide text-muted">
-                    Default voice ID
+                    Assign voice
                   </label>
-                  <p className="mt-1 text-[11px] text-muted">
-                    ElevenLabs voice ID, or leave blank for stub preview.
-                  </p>
-                  <div className="mt-2 flex gap-2">
-                    <input
-                      className="flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                      placeholder="e.g. 21m00Tcm4TlvDq8ikWAM"
-                      value={voiceIdInput}
-                      onChange={(e) => setVoiceIdInput(e.target.value)}
-                    />
+                  <select
+                    className="mt-2 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                    value={chosenVoiceId}
+                    onChange={(e) => {
+                      setChosenVoiceId(e.target.value);
+                      setSaveSuccess(false);
+                    }}
+                  >
+                    <option value="">— Select a voice —</option>
+                    {catalog.map((v) => (
+                      <option key={v.voice_id} value={v.voice_id}>
+                        {v.display_name} — {v.suggested_use}
+                      </option>
+                    ))}
+                  </select>
+                  {chosenVoiceId ? (
+                    <p className="mt-1 text-[11px] text-muted">
+                      {catalog.find((v) => v.voice_id === chosenVoiceId)?.description}
+                    </p>
+                  ) : null}
+                  <div className="mt-3 flex items-center gap-3">
                     <Button
                       variant="secondary"
-                      onClick={() => void handleSaveVoice()}
-                      disabled={saving}
+                      onClick={() => void handleAssignVoice()}
+                      disabled={saving || !chosenVoiceId}
                     >
                       {saving ? (
                         <Spinner className="h-4 w-4 border-t-text" />
                       ) : null}
-                      Save
+                      Save voice
                     </Button>
+                    {saveSuccess ? (
+                      <span className="text-xs text-green-400">Saved!</span>
+                    ) : null}
                   </div>
-                  {selected.default_voice_id ? (
-                    <p className="mt-2 text-[11px] text-muted">
-                      Current: <code className="text-xs">{selected.default_voice_id}</code>
-                    </p>
-                  ) : null}
                 </div>
 
                 {/* Sample text */}
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wide text-muted">
-                    Sample line
+                    Preview line
                   </label>
                   <textarea
                     className="mt-2 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
@@ -250,20 +277,20 @@ export default function VoiceStudioPage() {
                   />
                 </div>
 
-                {/* Style / tone */}
+                {/* Tone / style */}
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wide text-muted">
                     Tone / style (optional)
                   </label>
                   <input
                     className="mt-2 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                    placeholder="e.g. calm, dramatic, whisper"
+                    placeholder="e.g. calm, dramatic, whisper, excited"
                     value={styleInput}
                     onChange={(e) => setStyleInput(e.target.value)}
                   />
                 </div>
 
-                {/* Generate button */}
+                {/* Generate */}
                 <Button
                   onClick={() => void handleGenerate()}
                   disabled={generating || !sampleText.trim()}
@@ -284,10 +311,7 @@ export default function VoiceStudioPage() {
 
                 {/* Preview error */}
                 {previewError ? (
-                  <ErrorBanner
-                    title="Preview failed"
-                    detail={previewError}
-                  />
+                  <ErrorBanner title="Preview failed" detail={previewError} />
                 ) : null}
 
                 {/* Audio player */}
@@ -307,7 +331,7 @@ export default function VoiceStudioPage() {
                             : "default"
                         }
                       >
-                        {preview.provider}
+                        {preview.provider === "stub" ? "fallback" : preview.provider}
                       </Badge>
                     </div>
                     <p className="mt-2 text-xs italic text-muted">
@@ -322,6 +346,11 @@ export default function VoiceStudioPage() {
                       className="mt-3 w-full"
                       src={mediaUrl(preview.audio_url.replace(/^\/media\//, ""))}
                     />
+                    {preview.provider === "stub" ? (
+                      <p className="mt-2 text-[11px] text-amber-400">
+                        Fallback mode — set ELEVENLABS_API_KEY for real speech.
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

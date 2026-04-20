@@ -20,7 +20,10 @@ class CharacterOut(BaseModel):
     sample_texts: list[str] = []
     is_narrator: bool = False
     default_voice_id: str | None = None
+    voice_provider: str | None = None
+    voice_display_name: str | None = None
     voice_style_presets: dict[str, Any] | None = None
+    preview_audio_path: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -34,6 +37,8 @@ class PatchCharacterBody(BaseModel):
     name: str | None = None
     role: str | None = None
     default_voice_id: str | None = None
+    voice_provider: str | None = None
+    voice_display_name: str | None = None
     voice_style_presets: dict[str, Any] | None = None
     is_narrator: bool | None = None
     traits: list[str] | None = None
@@ -53,6 +58,12 @@ class PreviewOut(BaseModel):
     duration_ms: int
     text: str
     provider: str
+
+
+class AssignVoiceBody(BaseModel):
+    voice_id: str
+    provider: str | None = None
+    display_name: str | None = None
 
 
 class VoiceBody(BaseModel):
