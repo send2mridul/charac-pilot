@@ -24,7 +24,9 @@ def _get_whisper_model():
         from faster_whisper import WhisperModel
     except ImportError as e:
         raise RuntimeError(
-            "faster-whisper is not installed. From apps/api run: pip install -r requirements.txt"
+            "faster-whisper is not installed. From apps/api run: "
+            "python -m pip install -r requirements.txt "
+            "(use the same python that runs uvicorn)"
         ) from e
 
     model_size = os.environ.get("WHISPER_MODEL_SIZE", "tiny").strip().lower()
