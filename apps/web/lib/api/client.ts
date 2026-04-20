@@ -5,6 +5,7 @@ import type {
   EpisodeDto,
   JobDto,
   ProjectDto,
+  SpeakerGroupDto,
   TranscriptDto,
   TranscriptSegmentDto,
   UploadCreateResponse,
@@ -107,6 +108,23 @@ export const api = {
 
   listEpisodeTranscriptSegments: (episodeId: string) =>
     requestJson<TranscriptSegmentDto[]>(`/episodes/${episodeId}/segments`),
+
+  listSpeakerGroups: (episodeId: string) =>
+    requestJson<SpeakerGroupDto[]>(`/episodes/${episodeId}/speaker-groups`),
+
+  renameSpeakerGroup: (
+    episodeId: string,
+    speakerLabel: string,
+    body: { display_name?: string; is_narrator?: boolean },
+  ) =>
+    requestJson<SpeakerGroupDto>(
+      `/episodes/${episodeId}/speaker-groups/${encodeURIComponent(speakerLabel)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
 
   queueVoice: (characterId: string) =>
     requestJson<JobDto>(`/characters/${characterId}/voice`, {

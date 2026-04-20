@@ -61,6 +61,7 @@ export type EpisodeMediaJobResult = {
   duration_sec?: number;
   transcript_segment_count?: number;
   transcript_language?: string | null;
+  speaker_count?: number;
 };
 
 export type TranscriptSegmentDto = {
@@ -76,4 +77,13 @@ export type TranscriptDto = {
   episode_id: string;
   language: string | null;
   segments: TranscriptSegmentDto[];
+};
+
+export type SpeakerGroupDto = {
+  speaker_label: string;
+  display_name: string;
+  segment_count: number;
+  total_speaking_duration: number;
+  sample_texts: string[];
+  is_narrator: boolean;
 };

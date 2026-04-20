@@ -78,6 +78,17 @@ class TranscriptSegmentRecord:
 
 
 @dataclass
+class SpeakerGroupRecord:
+    speaker_label: str
+    episode_id: str
+    display_name: str
+    segment_count: int
+    total_speaking_duration: float
+    sample_texts: list[str]
+    is_narrator: bool = False
+
+
+@dataclass
 class CharacterRecord:
     id: str
     project_id: str
@@ -144,6 +155,7 @@ class InMemoryStore:
         self.characters: dict[str, CharacterRecord] = {}
         self.jobs: dict[str, JobRecord] = {}
         self.transcript_segments: dict[str, list[TranscriptSegmentRecord]] = {}
+        self.speaker_groups: dict[str, list[SpeakerGroupRecord]] = {}
 
         self._seed_episodes()
         self._seed_characters()
@@ -280,6 +292,58 @@ class InMemoryStore:
         with self._lock:
             return list(self.transcript_segments.get(episode_id, []))
 
+    def build_speaker_groups(self, episode_id: str) -> list[SpeakerGroupRecord]:
+        """Build draft speaker groups from current transcript segments."""
+        segs = self.list_transcript_segments(episode_id)
+        buckets: dict[str, list[TranscriptSegmentRecord]] = {}
+        for seg in segs:
+            lbl = seg.speaker_label or "UNKNOWN"
+            buckets.setdefault(lbl, []).append(seg)
+        groups: list[SpeakerGroupRecord] = []
+        for label, items in sorted(buckets.items()):
+            total_dur = sum(s.end_time - s.start_time for s in items)
+            samples = [s.text for s in items[:3]]
+            groups.append(SpeakerGroupRecord(
+                speaker_label=label,
+                episode_id=episode_id,
+                display_name=label,
+                segment_count=len(items),
+                total_speaking_duration=round(total_dur, 2),
+                sample_texts=samples,
+            ))
+        with self._lock:
+            self.speaker_groups[episode_id] = groups
+        return groups
+
+    def list_speaker_groups(self, episode_id: str) -> list[SpeakerGroupRecord]:
+        with self._lock:
+            cached = list(self.speaker_groups.get(episode_id, []))
+        if cached:
+            return cached
+        return self.build_speaker_groups(episode_id)
+
+    def rename_speaker_group(
+        self,
+        episode_id: str,
+        speaker_label: str,
+        display_name: str | None = None,
+        is_narrator: bool | None = None,
+    ) -> SpeakerGroupRecord | None:
+        groups = self.list_speaker_groups(episode_id)
+        target: SpeakerGroupRecord | None = None
+        for g in groups:
+            if g.speaker_label == speaker_label:
+                target = g
+                break
+        if not target:
+            return None
+        with self._lock:
+            if display_name is not None:
+                target.display_name = display_name
+            if is_narrator is not None:
+                target.is_narrator = is_narrator
+        return target
+
     def locate_episode_upload_dir(self, episode_id: str) -> tuple[str, Path] | None:
         """Return (project_id, episode_dir) if uploads/<project>/<episode_id> has recognizable media."""
         if not UPLOADS_ROOT.is_dir():
@@ -383,6 +447,8 @@ class InMemoryStore:
             episode_id,
             len(rows),
         )
+        if rows:
+            self.build_speaker_groups(episode_id)
 
     def _persist_transcript_json(
         self,

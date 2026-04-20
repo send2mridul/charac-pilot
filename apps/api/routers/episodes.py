@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from db.store import store
 from schemas.episode import EpisodeExportBody
 from schemas.job import JobOut
+from schemas.speaker_group import SpeakerGroupOut, SpeakerGroupRenameBody
 from schemas.transcript import TranscriptOut, TranscriptSegmentOut
 from services import episode_service, episode_transcript_service, job_service
 
@@ -54,6 +55,54 @@ def list_episode_transcript_segments(episode_id: str):
     rows = episode_transcript_service.list_segments(eid)
     log.info("GET /episodes/%s/segments -> 200 count=%s", eid, len(rows))
     return rows
+
+
+@router.get("/{episode_id}/speaker-groups", response_model=list[SpeakerGroupOut])
+def list_speaker_groups(episode_id: str):
+    eid = _episode_id(episode_id)
+    log.info("GET /episodes/%s/speaker-groups", eid)
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    if not episode_service.get_episode(eid):
+        raise HTTPException(status_code=404, detail="Episode not found")
+    groups = store.list_speaker_groups(eid)
+    out = [
+        SpeakerGroupOut(
+            speaker_label=g.speaker_label,
+            display_name=g.display_name,
+            segment_count=g.segment_count,
+            total_speaking_duration=g.total_speaking_duration,
+            sample_texts=g.sample_texts,
+            is_narrator=g.is_narrator,
+        )
+        for g in groups
+    ]
+    log.info("GET /episodes/%s/speaker-groups -> 200 count=%s", eid, len(out))
+    return out
+
+
+@router.patch("/{episode_id}/speaker-groups/{speaker_label}", response_model=SpeakerGroupOut)
+def rename_speaker_group(episode_id: str, speaker_label: str, body: SpeakerGroupRenameBody):
+    eid = _episode_id(episode_id)
+    log.info("PATCH /episodes/%s/speaker-groups/%s body=%s", eid, speaker_label, body.model_dump())
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    if not episode_service.get_episode(eid):
+        raise HTTPException(status_code=404, detail="Episode not found")
+    updated = store.rename_speaker_group(
+        eid,
+        speaker_label.strip(),
+        display_name=body.display_name,
+        is_narrator=body.is_narrator,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Speaker group '{speaker_label}' not found")
+    return SpeakerGroupOut(
+        speaker_label=updated.speaker_label,
+        display_name=updated.display_name,
+        segment_count=updated.segment_count,
+        total_speaking_duration=updated.total_speaking_duration,
+        sample_texts=updated.sample_texts,
+        is_narrator=updated.is_narrator,
+    )
 
 
 @router.post("/{episode_id}/segments/{segment_id}/replace", response_model=JobOut)

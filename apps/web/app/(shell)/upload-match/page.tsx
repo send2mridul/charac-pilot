@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Film, UploadCloud } from "lucide-react";
+import {
+  CheckCircle2,
+  Film,
+  Mic2,
+  Pencil,
+  UploadCloud,
+  Users,
+} from "lucide-react";
 import { api } from "@/lib/api/client";
 import { mediaUrl } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
@@ -9,6 +16,7 @@ import type {
   EpisodeMediaJobResult,
   JobDto,
   MatchCandidateDto,
+  SpeakerGroupDto,
   TranscriptSegmentDto,
 } from "@/lib/api/types";
 import { useProjects } from "@/components/providers/ProjectProvider";
@@ -95,6 +103,13 @@ export default function UploadMatchPage() {
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [transcriptFetchDone, setTranscriptFetchDone] = useState(false);
+  const [speakerGroups, setSpeakerGroups] = useState<SpeakerGroupDto[]>([]);
+  const [speakerGroupsLoading, setSpeakerGroupsLoading] = useState(false);
+  const [speakerGroupsError, setSpeakerGroupsError] = useState<string | null>(
+    null,
+  );
+  const [editingLabel, setEditingLabel] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
 
   const pollJob = useCallback(async (jobId: string) => {
     const j = await api.getJob(jobId);
@@ -120,6 +135,8 @@ export default function UploadMatchPage() {
     setTranscriptSegments([]);
     setTranscriptError(null);
     setTranscriptFetchDone(false);
+    setSpeakerGroups([]);
+    setSpeakerGroupsError(null);
     setPhase("uploading");
     setUploadRatio(0);
     try {
@@ -174,6 +191,66 @@ export default function UploadMatchPage() {
       cancelled = true;
     };
   }, [transcriptEpisodeId, phase]);
+
+  useEffect(() => {
+    const ep = transcriptEpisodeId;
+    if (!ep || phase !== "done" || !transcriptFetchDone) return;
+    let cancelled = false;
+    setSpeakerGroupsLoading(true);
+    setSpeakerGroupsError(null);
+    void api
+      .listSpeakerGroups(ep)
+      .then((rows) => {
+        if (!cancelled) setSpeakerGroups(rows);
+      })
+      .catch((e) => {
+        if (!cancelled)
+          setSpeakerGroupsError(
+            e instanceof ApiError ? e.message : "Could not load speaker groups",
+          );
+      })
+      .finally(() => {
+        if (!cancelled) setSpeakerGroupsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [transcriptEpisodeId, phase, transcriptFetchDone]);
+
+  async function handleRename(label: string, displayName: string) {
+    const ep = transcriptEpisodeId;
+    if (!ep) return;
+    try {
+      const updated = await api.renameSpeakerGroup(ep, label, {
+        display_name: displayName,
+      });
+      setSpeakerGroups((prev) =>
+        prev.map((g) => (g.speaker_label === label ? updated : g)),
+      );
+    } catch (e) {
+      setSpeakerGroupsError(
+        e instanceof ApiError ? e.message : "Rename failed",
+      );
+    }
+    setEditingLabel(null);
+  }
+
+  async function handleNarrator(label: string, isNarrator: boolean) {
+    const ep = transcriptEpisodeId;
+    if (!ep) return;
+    try {
+      const updated = await api.renameSpeakerGroup(ep, label, {
+        is_narrator: isNarrator,
+      });
+      setSpeakerGroups((prev) =>
+        prev.map((g) => (g.speaker_label === label ? updated : g)),
+      );
+    } catch (e) {
+      setSpeakerGroupsError(
+        e instanceof ApiError ? e.message : "Update failed",
+      );
+    }
+  }
 
   const showTranscriptSpinner =
     (!transcriptFetchDone && !transcriptError) || transcriptLoading;
@@ -243,6 +320,8 @@ export default function UploadMatchPage() {
               setTranscriptSegments([]);
               setTranscriptError(null);
               setTranscriptFetchDone(false);
+              setSpeakerGroups([]);
+              setSpeakerGroupsError(null);
             }}
           />
 
@@ -415,26 +494,177 @@ export default function UploadMatchPage() {
                 ) : null}
                 {transcriptFetchDone && transcriptSegments.length > 0 ? (
                   <ul className="mt-4 max-h-80 space-y-2 overflow-y-auto rounded-xl bg-white/[0.02] p-2 ring-1 ring-white/[0.06]">
-                    {transcriptSegments.map((row) => (
-                      <li
-                        key={row.segment_id}
-                        className="rounded-lg px-3 py-2 text-sm hover:bg-white/[0.03]"
-                      >
-                        <div className="flex flex-wrap items-baseline justify-between gap-2">
-                          <span className="font-mono text-[11px] text-muted">
-                            {formatTimecode(row.start_time)} →{" "}
-                            {formatTimecode(row.end_time)}
-                          </span>
-                          <span className="text-[11px] text-muted">
-                            {row.speaker_label ?? "—"}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-text">{row.text}</p>
-                      </li>
-                    ))}
+                    {transcriptSegments.map((row) => {
+                      const group = speakerGroups.find(
+                        (g) => g.speaker_label === row.speaker_label,
+                      );
+                      const label = group?.display_name ?? row.speaker_label ?? "—";
+                      return (
+                        <li
+                          key={row.segment_id}
+                          className="rounded-lg px-3 py-2 text-sm hover:bg-white/[0.03]"
+                        >
+                          <div className="flex flex-wrap items-baseline justify-between gap-2">
+                            <span className="font-mono text-[11px] text-muted">
+                              {formatTimecode(row.start_time)} →{" "}
+                              {formatTimecode(row.end_time)}
+                            </span>
+                            <Badge
+                              tone={
+                                group?.is_narrator
+                                  ? "violet"
+                                  : row.speaker_label?.startsWith("SPEAKER_")
+                                    ? "accent"
+                                    : "default"
+                              }
+                            >
+                              {label}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-text">{row.text}</p>
+                        </li>
+                      );
+                    })}
                   </ul>
                 ) : null}
               </div>
+            </div>
+          ) : null}
+
+          {mediaDone && transcriptFetchDone ? (
+            <div className="mt-6 border-t border-white/[0.06] pt-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-accent" />
+                  <h3 className="text-sm font-semibold text-text">
+                    Draft speaker groups
+                  </h3>
+                </div>
+                {speakerGroupsLoading ? (
+                  <Badge tone="accent">Loading…</Badge>
+                ) : (
+                  <Badge tone="default">{speakerGroups.length} speakers</Badge>
+                )}
+              </div>
+              {speakerGroupsError ? (
+                <div className="mt-3">
+                  <ErrorBanner
+                    title="Speaker groups error"
+                    detail={speakerGroupsError}
+                  />
+                </div>
+              ) : null}
+              {speakerGroupsLoading ? (
+                <div className="mt-4 flex items-center gap-2 text-sm text-muted">
+                  <Spinner className="h-4 w-4 border-t-canvas" />
+                  Loading speaker groups…
+                </div>
+              ) : null}
+              {!speakerGroupsLoading && speakerGroups.length === 0 ? (
+                <p className="mt-3 text-sm text-muted">
+                  No speaker groups detected.
+                </p>
+              ) : null}
+              {!speakerGroupsLoading && speakerGroups.length > 0 ? (
+                <ul className="mt-4 space-y-3">
+                  {speakerGroups.map((g) => (
+                    <li
+                      key={g.speaker_label}
+                      className="rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/[0.06]"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <Mic2 className="h-4 w-4 text-muted" />
+                          {editingLabel === g.speaker_label ? (
+                            <form
+                              className="flex items-center gap-2"
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                void handleRename(g.speaker_label, editValue);
+                              }}
+                            >
+                              <input
+                                className="rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                autoFocus
+                              />
+                              <Button type="submit" variant="secondary">
+                                Save
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => setEditingLabel(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </form>
+                          ) : (
+                            <>
+                              <span className="text-sm font-medium text-text">
+                                {g.display_name}
+                              </span>
+                              {g.display_name !== g.speaker_label ? (
+                                <span className="text-[11px] text-muted">
+                                  ({g.speaker_label})
+                                </span>
+                              ) : null}
+                              {g.is_narrator ? (
+                                <Badge tone="violet">narrator</Badge>
+                              ) : null}
+                            </>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              setEditingLabel(g.speaker_label);
+                              setEditValue(g.display_name);
+                            }}
+                          >
+                            <Pencil className="h-3 w-3" />
+                            Rename
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() =>
+                              void handleNarrator(
+                                g.speaker_label,
+                                !g.is_narrator,
+                              )
+                            }
+                          >
+                            {g.is_narrator
+                              ? "Unmark narrator"
+                              : "Mark as narrator"}
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted">
+                        <span>{g.segment_count} segments</span>
+                        <span>{g.total_speaking_duration.toFixed(1)}s total</span>
+                      </div>
+                      {g.sample_texts.length > 0 ? (
+                        <div className="mt-3 space-y-1">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                            Sample lines
+                          </p>
+                          {g.sample_texts.map((t, i) => (
+                            <p
+                              key={i}
+                              className="truncate text-xs italic text-muted"
+                            >
+                              &ldquo;{t}&rdquo;
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           ) : null}
 

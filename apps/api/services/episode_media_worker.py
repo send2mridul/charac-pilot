@@ -9,6 +9,7 @@ from pathlib import Path
 
 from db.store import store
 from services.asr_whisper import transcribe_wav_to_records
+from services.diarize import assign_speaker_labels
 from services.ffmpeg_bin import get_ffmpeg_paths
 from storage_paths import STORAGE_ROOT, to_rel_storage_path
 
@@ -251,13 +252,33 @@ def _run_episode_media_pipeline(
         len(t_segments),
         language,
     )
+
+    store.update_job(
+        job_id,
+        progress=0.78,
+        message="Speaker diarization (MFCC clustering)…",
+    )
+    try:
+        t_segments = assign_speaker_labels(wav_abs, t_segments)
+        logger.info(
+            "diarization done job_id=%s episode_id=%s",
+            job_id,
+            episode_id,
+        )
+    except Exception as e:
+        logger.warning(
+            "diarization failed (non-fatal) episode_id=%s: %s", episode_id, e,
+        )
+
     store.set_transcript_for_episode(episode_id, t_segments, language=language)
+    store.build_speaker_groups(episode_id)
     store.update_episode(
         episode_id,
         status="ready",
         transcript_language=language,
     )
 
+    speaker_count = len(store.list_speaker_groups(episode_id))
     result = {
         "episode_id": episode_id,
         "project_id": project_id,
@@ -267,6 +288,7 @@ def _run_episode_media_pipeline(
         "duration_sec": duration,
         "transcript_segment_count": len(t_segments),
         "transcript_language": language,
+        "speaker_count": speaker_count,
     }
     store.update_job(
         job_id,
