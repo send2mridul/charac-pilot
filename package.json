@@ -1,0 +1,22 @@
+{
+  "name": "characpilot",
+  "version": "0.0.1",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w web",
+    "dev:web": "npm run dev -w web",
+    "dev:clean": "node scripts/clean-web-next.cjs && npm run dev -w web",
+    "dev:api": "cd apps/api && .venv\\Scripts\\python.exe -m uvicorn main:app --reload --reload-exclude storage --host 127.0.0.1 --port 8000",
+    "dev:stack": "concurrently -n web,api -c cyan,magenta \"npm run dev:web\" \"npm run dev:api\"",
+    "dev:stack:clean": "concurrently -n web,api -c cyan,magenta \"npm run dev:clean -w web\" \"npm run dev:api\"",
+    "build": "npm run build -w web",
+    "lint": "npm run lint -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

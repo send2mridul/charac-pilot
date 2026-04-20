@@ -1,0 +1,28 @@
+{
+  "issues": [
+    {
+      "id": "i1",
+      "scene": "104",
+      "timecode": "01:12:08:14",
+      "severity": "high",
+      "summary": "Lapel pin missing vs prior setup",
+      "suggestion": "Restore copper pin or flag as intentional."
+    },
+    {
+      "id": "i2",
+      "scene": "108",
+      "timecode": "01:18:44:02",
+      "severity": "medium",
+      "summary": "Hair part flipped between over-shoulders",
+      "suggestion": "Mirror one angle or add B-roll bridge."
+    },
+    {
+      "id": "i3",
+      "scene": "111",
+      "timecode": "01:22:01:19",
+      "severity": "low",
+      "summary": "Ambient neon color temperature drift",
+      "suggestion": "Match grade node to master LUT."
+    }
+  ]
+}

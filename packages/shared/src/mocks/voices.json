@@ -1,0 +1,22 @@
+{
+  "voices": [
+    {
+      "id": "v1",
+      "name": "Mara · Pilot A",
+      "language": "English (US)",
+      "style": "Warm, cinematic",
+      "lastSample": "Line 12 — alley confrontation",
+      "stability": 0.62,
+      "clarity": 0.78
+    },
+    {
+      "id": "v2",
+      "name": "Ellis · Table read",
+      "language": "English (US)",
+      "style": "Crisp, close-mic",
+      "lastSample": "Scene 8 — briefing room",
+      "stability": 0.71,
+      "clarity": 0.69
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+node_modules
+.next
+dist
+.turbo
+.env
+.env.local
+__pycache__
+*.pyc
+.venv
+.python-version
+apps/api/storage/
+_uvicorn_test_*.txt

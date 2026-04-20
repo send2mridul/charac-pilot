@@ -1,0 +1,26 @@
+{
+  "characters": [
+    {
+      "id": "c1",
+      "name": "Mara Voss",
+      "role": "Lead",
+      "traits": ["calm cadence", "dry humor", "left-handed"],
+      "wardrobeNotes": "Charcoal trench, copper pins, no logos on camera.",
+      "continuityRules": [
+        "Hair part always camera right after scene 4",
+        "Scar visible in profile only"
+      ]
+    },
+    {
+      "id": "c2",
+      "name": "Ellis Kade",
+      "role": "Supporting",
+      "traits": ["fast talker", "nervous tell: adjusts cuff"],
+      "wardrobeNotes": "Navy suit, knit tie, pocket square folded flat.",
+      "continuityRules": [
+        "Ring on index finger only in flashbacks",
+        "Glasses anti-glare coating"
+      ]
+    }
+  ]
+}

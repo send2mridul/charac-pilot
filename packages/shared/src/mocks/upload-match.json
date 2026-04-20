@@ -1,0 +1,22 @@
+{
+  "candidates": [
+    {
+      "id": "m1",
+      "label": "Mara — turnaround pack (Mar 2026)",
+      "confidence": 0.94,
+      "source": "Character Bible"
+    },
+    {
+      "id": "m2",
+      "label": "Stunt double — wide shots",
+      "confidence": 0.61,
+      "source": "Library / B-roll"
+    },
+    {
+      "id": "m3",
+      "label": "Costume test — jacket only",
+      "confidence": 0.73,
+      "source": "Wardrobe"
+    }
+  ]
+}

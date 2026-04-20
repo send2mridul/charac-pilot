@@ -1,0 +1,28 @@
+{
+  "presets": [
+    {
+      "id": "e1",
+      "label": "Review ProRes",
+      "format": "ProRes 422 HQ",
+      "resolution": "4096 × 2160",
+      "eta": "~18 min",
+      "status": "running"
+    },
+    {
+      "id": "e2",
+      "label": "Client H.264",
+      "format": "H.264 · high profile",
+      "resolution": "1920 × 1080",
+      "eta": "~6 min",
+      "status": "queued"
+    },
+    {
+      "id": "e3",
+      "label": "Stems + XML",
+      "format": "WAV + FCPXML",
+      "resolution": "N/A",
+      "eta": "Done",
+      "status": "done"
+    }
+  ]
+}

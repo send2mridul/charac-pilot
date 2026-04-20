@@ -1,0 +1,28 @@
+{
+  "projects": [
+    {
+      "id": "p1",
+      "name": "Neon Alley",
+      "updatedAt": "Apr 19, 2026",
+      "status": "active",
+      "scenes": 38,
+      "lead": "You"
+    },
+    {
+      "id": "p2",
+      "name": "Glass Garden",
+      "updatedAt": "Apr 17, 2026",
+      "status": "active",
+      "scenes": 22,
+      "lead": "Studio North"
+    },
+    {
+      "id": "p3",
+      "name": "Midnight Courier",
+      "updatedAt": "Apr 12, 2026",
+      "status": "archived",
+      "scenes": 54,
+      "lead": "You"
+    }
+  ]
+}

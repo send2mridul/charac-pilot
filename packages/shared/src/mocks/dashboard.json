@@ -1,0 +1,38 @@
+{
+  "stats": {
+    "activeProjects": 6,
+    "rendersQueued": 14,
+    "continuityScore": 92,
+    "lastExportLabel": "ProRes 422 HQ · 4K"
+  },
+  "activity": [
+    {
+      "id": "a1",
+      "title": "Continuity pass",
+      "detail": "Neon Alley — wardrobe drift flagged",
+      "time": "2m ago",
+      "kind": "continuity"
+    },
+    {
+      "id": "a2",
+      "title": "Voice render batch",
+      "detail": "Mara · lines 12–40 queued",
+      "time": "18m ago",
+      "kind": "render"
+    },
+    {
+      "id": "a3",
+      "title": "Reference upload",
+      "detail": "Jacket turnaround added to bible",
+      "time": "1h ago",
+      "kind": "upload"
+    },
+    {
+      "id": "a4",
+      "title": "Export package",
+      "detail": "Deliverables v3 sent to drive",
+      "time": "Yesterday",
+      "kind": "export"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "pairs": [
+    {
+      "id": "s1",
+      "shot": "103A — alley entrance",
+      "beforeThumb": "/mock/before-1.svg",
+      "afterThumb": "/mock/after-1.svg",
+      "note": "Replace background signage; keep talent plate."
+    },
+    {
+      "id": "s2",
+      "shot": "112 — interior car",
+      "beforeThumb": "/mock/before-2.svg",
+      "afterThumb": "/mock/after-2.svg",
+      "note": "Swap rain overlay; preserve reflections."
+    }
+  ]
+}
