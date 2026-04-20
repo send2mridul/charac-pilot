@@ -68,6 +68,16 @@ class GeneratePreviewBody(BaseModel):
     clip_title: str | None = None
 
 
+class GenerateClipsBody(BaseModel):
+    mode: str = Field(default="multi_line")
+    lines: list[str] = []
+    prompt: str | None = None
+    count: int = 3
+    style: str | None = None
+    clip_label_prefix: str | None = None
+    voice_id: str | None = None
+
+
 class PreviewOut(BaseModel):
     preview_id: str
     character_id: str
@@ -93,3 +103,20 @@ class VoiceBody(BaseModel):
 class GenerateBody(BaseModel):
     prompt: str | None = None
     count: int = 1
+
+
+class BatchGeneratedClipOut(BaseModel):
+    clip_id: str
+    title: str
+    text: str
+    audio_url: str
+    tone_style_hint: str
+    created_at: str
+
+
+class GenerateClipsOut(BaseModel):
+    character_id: str
+    mode: str
+    provider: str
+    generated_count: int
+    clips: list[BatchGeneratedClipOut]

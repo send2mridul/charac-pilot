@@ -4,6 +4,7 @@ import type {
   CharacterDto,
   DesignVoiceResponseDto,
   EpisodeDto,
+  GenerateClipsResponseDto,
   JobDto,
   PreviewDto,
   ProjectDto,
@@ -324,6 +325,27 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+
+  generateCharacterClips: (
+    characterId: string,
+    body: {
+      mode: "multi_line" | "prompt";
+      lines?: string[];
+      prompt?: string;
+      count?: number;
+      style?: string;
+      clip_label_prefix?: string;
+      voice_id?: string;
+    },
+  ) =>
+    requestJson<GenerateClipsResponseDto>(
+      `/characters/${characterId}/generate-clips`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
 
   listCharacterClips: (characterId: string) =>
     requestJson<VoiceClipDto[]>(`/characters/${characterId}/clips`),

@@ -10,8 +10,11 @@ from fastapi.responses import StreamingResponse
 from db.store import store
 from schemas.character import (
     AssignVoiceBody,
+    BatchGeneratedClipOut,
     CharacterOut,
     GenerateBody,
+    GenerateClipsBody,
+    GenerateClipsOut,
     GeneratePreviewBody,
     PatchCharacterBody,
     PreviewOut,
@@ -26,6 +29,17 @@ from storage_paths import STORAGE_ROOT, ensure_storage_dirs, to_rel_storage_path
 
 router = APIRouter()
 log = logging.getLogger("characpilot.characters")
+
+
+def _prompt_to_lines(prompt: str, count: int) -> list[str]:
+    seed = " ".join(prompt.strip().split())
+    if not seed:
+        return []
+    safe_count = max(1, min(count, 12))
+    lines: list[str] = []
+    for i in range(safe_count):
+        lines.append(f"{seed} ({i + 1})")
+    return lines
 
 
 # --- Register all /{character_id}/... subpaths before bare /{character_id} (GET/PATCH).
@@ -163,6 +177,93 @@ def generate_preview_endpoint(character_id: str, body: GeneratePreviewBody):
         text=result["text"],
         provider=result["provider"],
         clip_id=clip_id,
+    )
+
+
+@router.post("/{character_id}/generate-clips", response_model=GenerateClipsOut)
+def generate_clips_endpoint(character_id: str, body: GenerateClipsBody):
+    c = character_service.get_character(character_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    voice_id = body.voice_id or c.default_voice_id
+    if not voice_id:
+        raise HTTPException(status_code=400, detail="Assign a voice first")
+
+    mode = (body.mode or "multi_line").strip().lower()
+    if mode not in {"multi_line", "prompt"}:
+        raise HTTPException(status_code=400, detail="Unsupported mode")
+
+    source_lines: list[str]
+    if mode == "prompt":
+        source_lines = _prompt_to_lines(body.prompt or "", body.count)
+    else:
+        source_lines = [ln.strip() for ln in (body.lines or []) if ln.strip()]
+
+    if not source_lines:
+        raise HTTPException(status_code=400, detail="No clip text provided")
+
+    ensure_storage_dirs()
+    prefix = (body.clip_label_prefix or "").strip()
+    style = (body.style or "").strip()
+    created: list[BatchGeneratedClipOut] = []
+    provider_used = "stub"
+
+    for idx, line in enumerate(source_lines, start=1):
+        result = generate_preview(
+            character_id=character_id,
+            text=line,
+            voice_id=voice_id,
+            style=style or None,
+        )
+        provider_used = str(result.get("provider") or provider_used)
+        rel_preview = str(result.get("audio_relpath") or "")
+        src = STORAGE_ROOT / rel_preview
+        if not src.is_file():
+            continue
+        clip_uid = f"vcp-{uuid.uuid4().hex[:12]}"
+        clip_dir = STORAGE_ROOT / "clips" / character_id
+        clip_dir.mkdir(parents=True, exist_ok=True)
+        ext = src.suffix or ".wav"
+        dest = clip_dir / f"{clip_uid}{ext}"
+        shutil.copy2(src, dest)
+        clip_rel = to_rel_storage_path(dest)
+        vname = (c.voice_display_name or "") if c else ""
+        if prefix:
+            title = f"{prefix} {idx}"
+        else:
+            title = f"Clip {idx}"
+        rec = store.create_voice_clip(
+            character_id=character_id,
+            project_id=c.project_id,
+            voice_id=voice_id,
+            voice_name=vname,
+            text=line,
+            tone_style_hint=style,
+            audio_path=clip_rel,
+            title=title,
+        )
+        created.append(
+            BatchGeneratedClipOut(
+                clip_id=rec.id,
+                title=rec.title,
+                text=rec.text,
+                audio_url=f"/media/{rec.audio_path}",
+                tone_style_hint=rec.tone_style_hint,
+                created_at=rec.created_at,
+            )
+        )
+
+    if not created:
+        raise HTTPException(status_code=500, detail="Could not generate clips")
+
+    character_service.update_character(character_id, preview_audio_path=created[-1].audio_url)
+    return GenerateClipsOut(
+        character_id=character_id,
+        mode=mode,
+        provider=provider_used,
+        generated_count=len(created),
+        clips=created,
     )
 
 

@@ -113,6 +113,21 @@ export type VoiceClipDto = {
   created_at: string;
 };
 
+export type GenerateClipsResponseDto = {
+  character_id: string;
+  mode: "multi_line" | "prompt" | string;
+  provider: string;
+  generated_count: number;
+  clips: Array<{
+    clip_id: string;
+    title: string;
+    text: string;
+    audio_url: string;
+    tone_style_hint: string;
+    created_at: string;
+  }>;
+};
+
 export type JobDto = {
   id: string;
   type: string;

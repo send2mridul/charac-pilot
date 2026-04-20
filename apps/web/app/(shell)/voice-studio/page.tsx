@@ -36,10 +36,24 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
 
 type StudioTab = "browse" | "design" | "remix";
+type ClipMode = "single" | "batch";
+type BatchInputMode = "multi_line" | "prompt";
 
 function audioSrcFromApiPath(url: string): string {
   const trimmed = url.replace(/^\/media\//, "");
   return mediaUrl(trimmed);
+}
+
+function characterAvatarSrc(c: CharacterDto): string | null {
+  const rel = c.thumbnail_paths?.[0];
+  if (!rel) return null;
+  return mediaUrl(rel.replace(/^\/media\//, ""));
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  if (parts.length === 0) return "?";
+  return parts.map((p) => p[0]?.toUpperCase() ?? "").join("");
 }
 
 function VoiceStudioContent() {
@@ -94,6 +108,12 @@ function VoiceStudioContent() {
   const [clipsLoading, setClipsLoading] = useState(false);
   const [clipLabel, setClipLabel] = useState("");
   const [clipBusyId, setClipBusyId] = useState<string | null>(null);
+  const [clipMode, setClipMode] = useState<ClipMode>("single");
+  const [batchInputMode, setBatchInputMode] =
+    useState<BatchInputMode>("multi_line");
+  const [batchLinesInput, setBatchLinesInput] = useState("");
+  const [batchPromptInput, setBatchPromptInput] = useState("");
+  const [batchCount, setBatchCount] = useState(5);
 
   useEffect(() => {
     const q = searchParams.get("character");
@@ -298,6 +318,50 @@ function VoiceStudioContent() {
     }
   }
 
+  async function handleBatchGenerate() {
+    if (!selected) return;
+    if (!selected.default_voice_id && !chosenVoiceId) {
+      setPreviewError("Assign a voice first in Voice Setup.");
+      return;
+    }
+    const lines = batchLinesInput
+      .split(/\r?\n/)
+      .map((ln) => ln.trim())
+      .filter(Boolean);
+    const payload =
+      batchInputMode === "prompt"
+        ? {
+            mode: "prompt" as const,
+            prompt: batchPromptInput.trim(),
+            count: Math.max(1, Math.min(12, batchCount || 1)),
+            style: styleInput.trim() || undefined,
+            clip_label_prefix: clipLabel.trim() || undefined,
+            voice_id: chosenVoiceId || undefined,
+          }
+        : {
+            mode: "multi_line" as const,
+            lines,
+            style: styleInput.trim() || undefined,
+            clip_label_prefix: clipLabel.trim() || undefined,
+            voice_id: chosenVoiceId || undefined,
+          };
+    setGenerating(true);
+    setPreview(null);
+    setPreviewError(null);
+    try {
+      await api.generateCharacterClips(selected.id, payload);
+      const rows = await api.listCharacterClips(selected.id);
+      setClips(rows);
+      if (batchInputMode === "multi_line") setBatchLinesInput("");
+    } catch (e) {
+      setPreviewError(
+        e instanceof ApiError ? e.message : "Batch clip generation failed",
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   async function handleRenameClip(clip: VoiceClipDto, title: string) {
     setClipBusyId(clip.id);
     try {
@@ -487,9 +551,24 @@ function VoiceStudioContent() {
                     onClick={() => setSelectedId(c.id)}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-text">
-                        {c.name}
-                      </span>
+                      <div className="flex min-w-0 items-center gap-2">
+                        {characterAvatarSrc(c) ? (
+                          <img
+                            src={characterAvatarSrc(c) ?? ""}
+                            alt={`${c.name} avatar`}
+                            className="h-7 w-7 rounded-full object-cover ring-1 ring-white/20"
+                          />
+                        ) : (
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/[0.1]">
+                            <span className="text-[10px] font-semibold text-text">
+                              {initials(c.name)}
+                            </span>
+                          </div>
+                        )}
+                        <span className="truncate text-sm font-medium text-text">
+                          {c.name}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-1.5">
                         {c.is_narrator ? (
                           <Badge tone="violet">Narrator</Badge>
@@ -562,12 +641,30 @@ function VoiceStudioContent() {
                 </p>
               </div>
             ) : (
-              <div className="space-y-6">
-                <div>
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-lg font-semibold text-text">
-                      {selected.name}
-                    </h2>
+              <div className="flex flex-col gap-6">
+                <div className="order-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                    Section 1: Character and assigned voice
+                  </p>
+                  <div className="mt-2 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      {characterAvatarSrc(selected) ? (
+                        <img
+                          src={characterAvatarSrc(selected) ?? ""}
+                          alt={`${selected.name} avatar`}
+                          className="h-10 w-10 rounded-full object-cover ring-1 ring-white/20"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/[0.12]">
+                          <span className="text-xs font-semibold text-text">
+                            {initials(selected.name)}
+                          </span>
+                        </div>
+                      )}
+                      <h2 className="text-lg font-semibold text-text">
+                        {selected.name}
+                      </h2>
+                    </div>
                     {selected.is_narrator ? (
                       <Badge tone="violet">Narrator</Badge>
                     ) : null}
@@ -604,36 +701,103 @@ function VoiceStudioContent() {
                 </div>
 
                 {!selected.default_voice_id ? (
-                  <div className="rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-100/90 ring-1 ring-amber-500/25">
+                  <div className="order-1 rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-100/90 ring-1 ring-amber-500/25">
                     No voice on this character yet. Use{" "}
                     <span className="font-medium text-text">Browse</span> below to
                     pick one, or use Design.
                   </div>
                 ) : null}
 
-                <div className="space-y-3 rounded-xl bg-white/[0.03] p-4 ring-1 ring-white/[0.08] transition hover:ring-white/12">
+                <div className="order-3 space-y-3 rounded-xl bg-white/[0.03] p-4 ring-1 ring-white/[0.08] transition hover:ring-white/12">
                   <div className="flex items-center gap-2">
                     <Play className="h-4 w-4 text-accent" />
                     <h3 className="text-sm font-semibold text-text">
-                      Generate lines
+                      Section 3: Generate audio clips
                     </h3>
                   </div>
                   <p className="text-xs leading-relaxed text-muted">
-                    Text is spoken with this character&apos;s assigned voice. Each
-                    run is saved to the clip library for playback and download.
+                    Use this character&apos;s assigned voice to create one or more clips.
                   </p>
+                  <div className="flex flex-wrap gap-2">
+                    {(["single", "batch"] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                          clipMode === m
+                            ? "bg-accent/20 text-text ring-1 ring-accent/35"
+                            : "bg-white/[0.04] text-muted hover:bg-white/[0.07]"
+                        }`}
+                        onClick={() => setClipMode(m)}
+                      >
+                        {m === "single" ? "Single clip" : "Batch clips"}
+                      </button>
+                    ))}
+                  </div>
                   <div>
                     <label className="block text-[11px] font-medium text-muted">
-                      Line
+                      Single clip text
                     </label>
                     <textarea
                       className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
                       rows={3}
-                      placeholder="What should they say?"
+                      placeholder="Text for one clip"
                       value={sampleText}
                       onChange={(e) => setSampleText(e.target.value)}
                     />
                   </div>
+                  {clipMode === "batch" ? (
+                    <div className="space-y-3 rounded-lg bg-white/[0.02] p-3 ring-1 ring-white/[0.06]">
+                      <div className="flex flex-wrap gap-2">
+                        {(["multi_line", "prompt"] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                              batchInputMode === m
+                                ? "bg-accent/20 text-text ring-1 ring-accent/35"
+                                : "bg-white/[0.04] text-muted hover:bg-white/[0.07]"
+                            }`}
+                            onClick={() => setBatchInputMode(m)}
+                          >
+                            {m === "multi_line" ? "Multi-line text" : "Prompt to create lines"}
+                          </button>
+                        ))}
+                      </div>
+                      {batchInputMode === "multi_line" ? (
+                        <textarea
+                          className="w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                          rows={4}
+                          placeholder="One clip line per row"
+                          value={batchLinesInput}
+                          onChange={(e) => setBatchLinesInput(e.target.value)}
+                        />
+                      ) : (
+                        <div className="space-y-2">
+                          <textarea
+                            className="w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                            rows={3}
+                            placeholder="Generate 5 short excited greetings for this character"
+                            value={batchPromptInput}
+                            onChange={(e) => setBatchPromptInput(e.target.value)}
+                          />
+                          <div>
+                            <label className="block text-[11px] font-medium text-muted">
+                              Number of clips
+                            </label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={12}
+                              className="mt-1 w-28 rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                              value={batchCount}
+                              onChange={(e) => setBatchCount(Number(e.target.value) || 1)}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                   <div>
                     <label className="block text-[11px] font-medium text-muted">
                       Tone / style hint (optional)
@@ -658,12 +822,23 @@ function VoiceStudioContent() {
                       value={clipLabel}
                       onChange={(e) => setClipLabel(e.target.value)}
                     />
+                    <p className="mt-1 text-[10px] text-muted">
+                      Label is used only for organizing saved clips.
+                    </p>
                   </div>
                   <Button
-                    onClick={() => void handleGenerate()}
+                    onClick={() =>
+                      void (clipMode === "single"
+                        ? handleGenerate()
+                        : handleBatchGenerate())
+                    }
                     disabled={
                       generating ||
-                      !sampleText.trim() ||
+                      (clipMode === "single" && !sampleText.trim()) ||
+                      (clipMode === "batch" &&
+                        (batchInputMode === "multi_line"
+                          ? !batchLinesInput.trim()
+                          : !batchPromptInput.trim())) ||
                       (!selected.default_voice_id && !chosenVoiceId)
                     }
                     className="w-full"
@@ -676,7 +851,9 @@ function VoiceStudioContent() {
                     ) : (
                       <>
                         <Play className="h-4 w-4" />
-                        Generate and save clip
+                        {clipMode === "single"
+                          ? "Generate and save clip"
+                          : "Generate and save clips"}
                       </>
                     )}
                   </Button>
@@ -726,12 +903,12 @@ function VoiceStudioContent() {
                   ) : null}
                 </div>
 
-                <div className="space-y-3">
+                <div className="order-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <Library className="h-4 w-4 text-muted" />
                       <h3 className="text-sm font-semibold text-text">
-                        Clip library
+                        Audio Library
                       </h3>
                     </div>
                     {clips.length > 0 ? (
@@ -748,8 +925,7 @@ function VoiceStudioContent() {
                     <p className="text-xs text-muted">Loading clips…</p>
                   ) : clips.length === 0 ? (
                     <p className="text-xs text-muted">
-                      Generated lines appear here. Create a line above to build your
-                      library.
+                      Generated clips appear here for this character.
                     </p>
                   ) : (
                     <ul className="max-h-56 space-y-2 overflow-y-auto rounded-lg p-2 ring-1 ring-white/[0.06]">
@@ -771,6 +947,14 @@ function VoiceStudioContent() {
                           />
                           <p className="line-clamp-2 text-[11px] text-muted">
                             {cl.text}
+                          </p>
+                          {cl.tone_style_hint ? (
+                            <p className="mt-1 text-[10px] text-muted">
+                              Tone: {cl.tone_style_hint}
+                            </p>
+                          ) : null}
+                          <p className="mt-1 text-[10px] text-muted">
+                            Created: {new Date(cl.created_at).toLocaleString()}
                           </p>
                           <audio
                             controls
@@ -801,9 +985,12 @@ function VoiceStudioContent() {
                   )}
                 </div>
 
-                <div className="space-y-3">
+                <div className="order-2 space-y-3">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                    Voice setup
+                    Section 2: Voice setup
+                  </p>
+                  <p className="text-xs text-muted">
+                    Voice setup creates or assigns this character voice. Clip generation is in Section 3.
                   </p>
                   <div className="flex flex-wrap gap-2 border-b border-white/[0.08] pb-3">
                   {(
