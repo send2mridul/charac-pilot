@@ -240,16 +240,16 @@ function ReplaceLinesContent() {
     <div className="space-y-10">
       <PageHeader
         title="Replace Lines"
-        subtitle="Swap dialogue on a transcript line and generate new audio using a character voice you set up in Voice Studio."
+        subtitle="Final mix step: pick a transcript line, pick the performing character, and generate new audio with the voice you attached in Voice Studio."
       />
 
       <Panel>
         <ol className="list-inside list-decimal space-y-1.5 text-sm leading-relaxed text-muted">
-          <li>Choose an episode that already has a transcript.</li>
-          <li>Select the line you want to change.</li>
-          <li>Pick the character who should speak it.</li>
-          <li>Type the replacement line.</li>
-          <li>Generate audio (uses that character&apos;s assigned voice).</li>
+          <li>Open an episode that already has a transcript.</li>
+          <li>Select the line to change.</li>
+          <li>Choose which character should speak it.</li>
+          <li>Edit the line if needed.</li>
+          <li>Generate. Audio uses that character&apos;s voice.</li>
         </ol>
       </Panel>
 

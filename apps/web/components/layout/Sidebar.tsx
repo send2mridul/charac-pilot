@@ -3,12 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronRight, FolderKanban, Sparkles } from "lucide-react";
-import {
-  APP_BRAND,
-  comingSoonNav,
-  secondaryNav,
-  workflowNav,
-} from "@/lib/nav";
+import { APP_BRAND, secondaryNav, workflowNav } from "@/lib/nav";
 import { useHydrated } from "@/lib/useHydrated";
 import { useProjects } from "@/components/providers/ProjectProvider";
 import { SidebarSkeleton } from "@/components/layout/SidebarSkeleton";
@@ -38,7 +33,7 @@ export function Sidebar() {
             {APP_BRAND}
           </div>
           <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-[var(--sidebar-muted)]">
-            Voice · Studio
+            Video to cast to voice
           </div>
         </div>
       </Link>
@@ -56,28 +51,43 @@ export function Sidebar() {
                 : pathname === item.href ||
                   pathname.startsWith(`${item.href}/`));
             const Icon = item.icon;
+            const primary = item.primary === true;
             return (
               <li key={item.href}>
                 <Link
                   href={item.href}
                   className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
-                    active
-                      ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-accent-foreground)] shadow-soft"
-                      : "text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar-accent)]/60 hover:text-[var(--sidebar-accent-foreground)]"
+                    primary
+                      ? active
+                        ? "bg-primary text-primary-foreground shadow-soft ring-1 ring-primary/30"
+                        : "bg-primary/12 text-[var(--sidebar-foreground)] ring-1 ring-primary/25 hover:bg-primary/20"
+                      : active
+                        ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-accent-foreground)] shadow-soft"
+                        : "text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar-accent)]/60 hover:text-[var(--sidebar-accent-foreground)]"
                   }`}
                 >
                   <span
                     className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
-                      active
-                        ? "bg-primary/15 text-primary"
-                        : "bg-[var(--sidebar-accent)]/40 text-[var(--sidebar-muted)] group-hover:text-[var(--sidebar-accent-foreground)]"
+                      primary
+                        ? active
+                          ? "bg-primary-foreground/15 text-primary-foreground"
+                          : "bg-primary/20 text-primary"
+                        : active
+                          ? "bg-primary/15 text-primary"
+                          : "bg-[var(--sidebar-accent)]/40 text-[var(--sidebar-muted)] group-hover:text-[var(--sidebar-accent-foreground)]"
                     }`}
                   >
                     <Icon className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
                   </span>
-                  <span className="flex-1 text-left tracking-tight">{item.label}</span>
+                  <span
+                    className={`flex-1 text-left tracking-tight ${primary ? "font-semibold" : ""}`}
+                  >
+                    {item.label}
+                  </span>
                   {active ? (
-                    <ChevronRight className="h-4 w-4 text-[var(--sidebar-muted)]" />
+                    <ChevronRight
+                      className={`h-4 w-4 ${primary ? "text-primary-foreground/80" : "text-[var(--sidebar-muted)]"}`}
+                    />
                   ) : null}
                 </Link>
               </li>
@@ -85,51 +95,35 @@ export function Sidebar() {
           })}
         </ul>
 
-        <SectionLabel>Helpers</SectionLabel>
-        <ul className="space-y-1">
-          {secondaryNav.map((item) => {
-            const active =
-              pathname === item.href || pathname.startsWith(`${item.href}/`);
-            const Icon = item.icon;
-            return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
-                    active
-                      ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-accent-foreground)]"
-                      : "text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar-accent)]/60 hover:text-[var(--sidebar-accent-foreground)]"
-                  }`}
-                >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--sidebar-accent)]/40 text-[var(--sidebar-muted)]">
-                    <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  </span>
-                  <span className="flex-1 leading-snug">{item.label}</span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-
-        <SectionLabel>Coming Soon</SectionLabel>
-        <ul className="space-y-1">
-          {comingSoonNav.map((item) => {
-            const Icon = item.icon;
-            return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[var(--sidebar-muted)] transition hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--sidebar-accent-foreground)]"
-                >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--sidebar-accent)]/40 text-[var(--sidebar-muted)]">
-                    <Icon className="h-3 w-3 shrink-0" aria-hidden />
-                  </span>
-                  <span className="flex-1 leading-snug">{item.label}</span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+        {secondaryNav.length > 0 ? (
+          <>
+            <SectionLabel>Helpers</SectionLabel>
+            <ul className="space-y-1">
+              {secondaryNav.map((item) => {
+                const active =
+                  pathname === item.href || pathname.startsWith(`${item.href}/`);
+                const Icon = item.icon;
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
+                        active
+                          ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-accent-foreground)]"
+                          : "text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar-accent)]/60 hover:text-[var(--sidebar-accent-foreground)]"
+                      }`}
+                    >
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--sidebar-accent)]/40 text-[var(--sidebar-muted)]">
+                        <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      </span>
+                      <span className="flex-1 leading-snug">{item.label}</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        ) : null}
 
         <SectionLabel>Projects</SectionLabel>
         {loading ? (

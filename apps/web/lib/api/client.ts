@@ -268,6 +268,19 @@ export const api = {
       },
     ),
 
+  mergeSpeakerGroups: (
+    episodeId: string,
+    body: { from_label: string; into_label: string },
+  ) =>
+    requestJson<SpeakerGroupDto[]>(
+      `/episodes/${episodeId}/speaker-groups/merge`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
   createCharacterFromGroup: (
     episodeId: string,
     speakerLabel: string,

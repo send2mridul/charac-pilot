@@ -20,7 +20,7 @@ import Link from "next/link";
 import { api } from "@/lib/api/client";
 import { mediaUrl } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
-import type { CharacterDto } from "@/lib/api/types";
+import type { CharacterDto, EpisodeDto } from "@/lib/api/types";
 import { useProjects } from "@/components/providers/ProjectProvider";
 import { VoiceWave } from "@/components/characters/VoiceWave";
 import { Button } from "@/components/ui/Button";
@@ -86,6 +86,26 @@ export default function CharactersPage() {
   const [avatarUploading, setAvatarUploading] = useState<string | null>(null);
   const [avatarTargetId, setAvatarTargetId] = useState<string | null>(null);
   const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null);
+  const [episodes, setEpisodes] = useState<EpisodeDto[]>([]);
+
+  useEffect(() => {
+    if (!activeProjectId) {
+      setEpisodes([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .listEpisodes(activeProjectId)
+      .then((rows) => {
+        if (!cancelled) setEpisodes(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setEpisodes([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId]);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -116,6 +136,10 @@ export default function CharactersPage() {
 
   const active = projects.find((p) => p.id === activeProjectId);
   const voicedCount = characters.filter((c) => c.default_voice_id).length;
+
+  const episodeTitleById = Object.fromEntries(
+    episodes.map((e) => [e.id, e.title]),
+  );
 
   async function handleAddCharacter(e: React.FormEvent) {
     e.preventDefault();
@@ -244,7 +268,7 @@ export default function CharactersPage() {
             Characters
           </h1>
           <p className="mt-3 max-w-md text-[15px] leading-relaxed text-muted-foreground">
-            Add people to your project, attach faces and notes, then give them voices in Voice Studio.
+            Build your cast here or from Import from Video. Then attach voices, generate clips, and finish in Replace Lines.
           </p>
         </div>
         <Link
@@ -555,8 +579,15 @@ export default function CharactersPage() {
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
                         <span className="inline-flex items-center gap-1">
                           <span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
-                          {c.source_episode_id ? "Imported from video" : "Added manually"}
+                          {c.source_episode_id
+                            ? `From Import · ${episodeTitleById[c.source_episode_id] ?? "episode"}`
+                            : "Added manually"}
                         </span>
+                        {c.source_speaker_labels.length > 0 ? (
+                          <span className="text-[10px] opacity-80">
+                            Voice label: {c.source_speaker_labels.join(", ")}
+                          </span>
+                        ) : null}
                         {c.role ? (
                           <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
                             {c.role}
@@ -603,27 +634,53 @@ export default function CharactersPage() {
                             </div>
                           </div>
 
-                          <div className="mt-3 flex gap-2">
+                          <div className="mt-3 flex flex-wrap gap-2">
                             <Link
                               href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=voice&tab=browse`}
                               className={buttonClass(
                                 "outline",
-                                "flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs",
+                                "flex min-w-[120px] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs",
                               )}
                             >
                               <Repeat className="h-3 w-3" />
                               Change voice
                             </Link>
                             <Link
-                              href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=clips`}
+                              href="/voice-studio"
                               className={buttonClass(
                                 "outline",
-                                "flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs",
+                                "flex min-w-[120px] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs",
                               )}
                             >
                               <ExternalLink className="h-3 w-3" />
-                              Open Studio
+                              Voice Studio
                             </Link>
+                            <Link
+                              href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=clips`}
+                              className={buttonClass(
+                                "outline",
+                                "flex min-w-[120px] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs",
+                              )}
+                            >
+                              <Sparkles className="h-3 w-3" />
+                              Generate clips
+                            </Link>
+                            {c.source_episode_id || c.segment_count > 0 ? (
+                              <Link
+                                href={
+                                  c.source_episode_id
+                                    ? `/replace-lines?episode=${encodeURIComponent(c.source_episode_id)}`
+                                    : "/replace-lines"
+                                }
+                                className={buttonClass(
+                                  "outline",
+                                  "flex min-w-[120px] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs",
+                                )}
+                              >
+                                <Quote className="h-3 w-3" />
+                                Replace lines
+                              </Link>
+                            ) : null}
                           </div>
                         </>
                       ) : (

@@ -163,6 +163,8 @@ export type JobDto = {
   result: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+  /** When true, stop polling (matches terminal job.status on the server). */
+  terminal?: boolean;
 };
 
 export type MatchCandidateDto = {
@@ -190,6 +192,10 @@ export type EpisodeMediaJobResult = {
   transcript_segment_count?: number;
   transcript_language?: string | null;
   speaker_count?: number;
+  /** azure_video_indexer | local */
+  import_provider?: string;
+  /** When import used local path, why Azure was skipped or failed (no secrets). */
+  fallback_reason?: string | null;
 };
 
 export type TranscriptSegmentDto = {

@@ -13,3 +13,8 @@ class SpeakerGroupOut(BaseModel):
 class SpeakerGroupRenameBody(BaseModel):
     display_name: str | None = None
     is_narrator: bool | None = None
+
+
+class SpeakerGroupMergeBody(BaseModel):
+    from_label: str
+    into_label: str

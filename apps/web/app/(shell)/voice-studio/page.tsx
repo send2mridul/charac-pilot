@@ -625,7 +625,7 @@ function VoiceStudioContent() {
     <div className="space-y-8">
       <PageHeader
         title="Voice Studio"
-        subtitle="Assign voices to characters, draft lines, and generate clips in one clean flow."
+        subtitle="Your cast is on the roster. Assign or design a voice per character, then generate clips you can reuse."
       />
 
       {error ? <ErrorBanner title="Voice studio" detail={error} /> : null}

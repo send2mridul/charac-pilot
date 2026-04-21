@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   CheckCircle2,
+  EyeOff,
   FileText,
   FileVideo,
+  GitMerge,
   Mic2,
   Pencil,
   UploadCloud,
@@ -31,6 +33,15 @@ import { Panel } from "@/components/ui/Panel";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Spinner } from "@/components/ui/Spinner";
 
+/** Polling interval while job.status is queued or running. */
+const JOB_POLL_INTERVAL_MS = 400;
+/** Safety cap so the UI never polls forever if the job never reaches a terminal status. */
+const JOB_POLL_MAX_MS = 45 * 60 * 1000;
+
+function normalizeJobStatus(status: unknown): string {
+  return typeof status === "string" ? status.trim().toLowerCase() : "";
+}
+
 function mediaResultFromJob(job: JobDto | null): EpisodeMediaJobResult | null {
   if (!job?.result || typeof job.result !== "object") return null;
   const r = job.result as Record<string, unknown>;
@@ -55,6 +66,16 @@ function mediaResultFromJob(job: JobDto | null): EpisodeMediaJobResult | null {
       typeof r.transcript_language === "string"
         ? r.transcript_language
         : undefined,
+    speaker_count:
+      typeof r.speaker_count === "number" ? r.speaker_count : undefined,
+    import_provider:
+      typeof r.import_provider === "string" ? r.import_provider : undefined,
+    fallback_reason:
+      typeof r.fallback_reason === "string"
+        ? r.fallback_reason
+        : r.fallback_reason === null
+          ? null
+          : undefined,
   };
 }
 
@@ -65,7 +86,7 @@ function resolveEpisodeIdForTranscript(
 ): string | null {
   const fromMedia = media?.episode_id?.trim();
   if (fromMedia) return fromMedia;
-  if (job?.status !== "done" || !job.result || typeof job.result !== "object") {
+  if (normalizeJobStatus(job?.status) !== "done" || !job.result || typeof job.result !== "object") {
     return null;
   }
   const eid = (job.result as Record<string, unknown>).episode_id;
@@ -124,24 +145,54 @@ export default function UploadMatchPage() {
   const [charCreateError, setCharCreateError] = useState<string | null>(null);
   const [selectedTranscriptSegmentId, setSelectedTranscriptSegmentId] =
     useState<string | null>(null);
+  const [ignoredLabels, setIgnoredLabels] = useState<Set<string>>(new Set());
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [mergeTargetFor, setMergeTargetFor] = useState<Record<string, string>>(
+    {},
+  );
 
   const storageKey = activeProjectId
     ? `castvoice:import-context:${activeProjectId}`
     : null;
 
-  const pollJob = useCallback(async (jobId: string) => {
-    const j = await api.getJob(jobId);
-    setJob(j);
-    if (j.status === "queued" || j.status === "running") {
-      window.setTimeout(() => void pollJob(jobId), 400);
-      return;
-    }
-    if (j.status === "failed") {
+  const pollJob = useCallback(async (jobId: string, startedAt = Date.now()) => {
+    try {
+      const j = await api.getJob(jobId);
+      setJob(j);
+      const st = normalizeJobStatus(j.status);
+      if (st === "queued" || st === "running") {
+        if (Date.now() - startedAt > JOB_POLL_MAX_MS) {
+          setPhase("failed");
+          setError(
+            "Timed out waiting for processing (job stayed queued or running). Check the API logs or try again.",
+          );
+          return;
+        }
+        window.setTimeout(
+          () => void pollJob(jobId, startedAt),
+          JOB_POLL_INTERVAL_MS,
+        );
+        return;
+      }
+      if (st === "failed") {
+        setPhase("failed");
+        return;
+      }
+      if (st === "done") {
+        setPhase("done");
+        return;
+      }
       setPhase("failed");
-      return;
-    }
-    if (j.status === "done") {
-      setPhase("done");
+      setError(
+        `Unexpected job status from server: ${String(j.status ?? "").slice(0, 120)}`,
+      );
+    } catch (e) {
+      setPhase("failed");
+      setError(
+        e instanceof ApiError ? e.message : "Could not load job status",
+      );
     }
   }, []);
 
@@ -159,6 +210,8 @@ export default function UploadMatchPage() {
     setCreatedChars({});
     setCharCreateError(null);
     setSelectedTranscriptSegmentId(null);
+    setBulkSelected(new Set());
+    setMergeTargetFor({});
     setPhase("uploading");
     setUploadRatio(0);
     try {
@@ -177,8 +230,45 @@ export default function UploadMatchPage() {
     }
   }
 
-  const mediaDone = persistedMedia ?? (job?.status === "done" ? mediaResultFromJob(job) : null);
+  const mediaDone =
+    persistedMedia ??
+    (job && normalizeJobStatus(job.status) === "done"
+      ? mediaResultFromJob(job)
+      : null);
   const transcriptEpisodeId = resolveEpisodeIdForTranscript(job, mediaDone);
+
+  const ignoredStorageKey = transcriptEpisodeId
+    ? `castvoice:ignored-cast:${transcriptEpisodeId}`
+    : null;
+
+  useEffect(() => {
+    setIgnoredLabels(new Set());
+  }, [transcriptEpisodeId]);
+
+  useEffect(() => {
+    if (!ignoredStorageKey) return;
+    try {
+      const raw = window.localStorage.getItem(ignoredStorageKey);
+      if (!raw) return;
+      const arr = JSON.parse(raw) as unknown;
+      if (!Array.isArray(arr)) return;
+      setIgnoredLabels(new Set(arr.filter((x) => typeof x === "string")));
+    } catch {
+      /* ignore */
+    }
+  }, [ignoredStorageKey]);
+
+  useEffect(() => {
+    if (!ignoredStorageKey) return;
+    try {
+      window.localStorage.setItem(
+        ignoredStorageKey,
+        JSON.stringify([...ignoredLabels]),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [ignoredStorageKey, ignoredLabels]);
 
   useEffect(() => {
     setPersistedMedia(null);
@@ -326,6 +416,113 @@ export default function UploadMatchPage() {
     setCreatingLabel(null);
   }
 
+  async function runMerge(fromLabel: string, intoLabel: string) {
+    const ep = transcriptEpisodeId;
+    if (!ep || !fromLabel || !intoLabel || fromLabel === intoLabel) return;
+    setMergeBusy(true);
+    setSpeakerGroupsError(null);
+    try {
+      const newGroups = await api.mergeSpeakerGroups(ep, {
+        from_label: fromLabel,
+        into_label: intoLabel,
+      });
+      setSpeakerGroups(newGroups);
+      const rows = await api.listEpisodeTranscriptSegments(ep);
+      setTranscriptSegments(rows);
+      setCreatedChars((prev) => {
+        const next = { ...prev };
+        const moved = next[fromLabel];
+        if (moved) {
+          delete next[fromLabel];
+          next[intoLabel] = moved;
+        }
+        return next;
+      });
+      setIgnoredLabels((prev) => {
+        const n = new Set(prev);
+        n.delete(fromLabel);
+        return n;
+      });
+      setBulkSelected((prev) => {
+        const n = new Set(prev);
+        n.delete(fromLabel);
+        return n;
+      });
+      setMergeTargetFor((prev) => {
+        const next = { ...prev };
+        delete next[fromLabel];
+        delete next[intoLabel];
+        return next;
+      });
+    } catch (e) {
+      setSpeakerGroupsError(
+        e instanceof ApiError ? e.message : "Could not merge cast entries",
+      );
+    } finally {
+      setMergeBusy(false);
+    }
+  }
+
+  function toggleIgnore(label: string) {
+    setIgnoredLabels((prev) => {
+      const n = new Set(prev);
+      if (n.has(label)) n.delete(label);
+      else n.add(label);
+      return n;
+    });
+    setBulkSelected((prev) => {
+      const n = new Set(prev);
+      n.delete(label);
+      return n;
+    });
+  }
+
+  function toggleBulkLabel(label: string) {
+    if (createdChars[label]) return;
+    setBulkSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(label)) n.delete(label);
+      else n.add(label);
+      return n;
+    });
+  }
+
+  async function bulkCreateCharacters() {
+    const ep = transcriptEpisodeId;
+    if (!ep || bulkSelected.size === 0) return;
+    setBulkBusy(true);
+    setCharCreateError(null);
+    try {
+      for (const label of bulkSelected) {
+        if (createdChars[label]) continue;
+        const g = speakerGroups.find((x) => x.speaker_label === label);
+        const name =
+          (g?.display_name && g.display_name !== g.speaker_label
+            ? g.display_name
+            : g?.display_name || label) || label;
+        const c = await api.createCharacterFromGroup(ep, label, {
+          name: name.trim() || label,
+          project_id: activeProjectId || undefined,
+        });
+        setCreatedChars((prev) => ({ ...prev, [label]: c }));
+      }
+      setBulkSelected(new Set());
+    } catch (e) {
+      setCharCreateError(
+        e instanceof ApiError ? e.message : "Bulk create failed",
+      );
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  const visibleCastGroups = speakerGroups.filter(
+    (g) => !ignoredLabels.has(g.speaker_label),
+  );
+  const pendingCastCount = visibleCastGroups.filter(
+    (g) => !createdChars[g.speaker_label],
+  ).length;
+
   const showTranscriptSpinner =
     (!transcriptFetchDone && !transcriptError) || transcriptLoading;
 
@@ -340,8 +537,15 @@ export default function UploadMatchPage() {
   if (phase === "uploading") pipelineActive = 0;
   else if (phase === "processing") pipelineActive = 1;
   else if (phase === "done") {
-    if (transcriptLoading || (!transcriptFetchDone && !transcriptError)) pipelineActive = 2;
-    else pipelineActive = 3;
+    if (transcriptLoading || (!transcriptFetchDone && !transcriptError)) {
+      pipelineActive = 2;
+    } else if (speakerGroupsLoading) {
+      pipelineActive = 3;
+    } else if (visibleCastGroups.length === 0 && transcriptFetchDone && !transcriptError) {
+      pipelineActive = 3;
+    } else {
+      pipelineActive = 4;
+    }
   }
 
   return (
@@ -350,23 +554,24 @@ export default function UploadMatchPage() {
         <div className="max-w-2xl">
           <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
             <Wand2 className="h-3 w-3" />
-            Speaker detection
+            Cast from footage
           </span>
           <h1 className="mt-4 font-display text-5xl font-semibold leading-[1.05] tracking-tight text-balance text-foreground md:text-6xl">
             Import from Video
           </h1>
           <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-muted-foreground">
-            Bring in an older episode to detect speakers, build a transcript, and turn speaker groups into characters. You can also add characters manually at any time.
+            Upload a clip, get a transcript, review the detected cast, then turn each voice into a character. Add more characters manually anytime on the Characters page.
           </p>
         </div>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 rounded-2xl border border-border bg-surface p-3 shadow-soft md:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 rounded-2xl border border-border bg-surface p-3 shadow-soft sm:grid-cols-3 lg:grid-cols-5">
         {[
           { icon: FileVideo, label: "Upload video", idx: 0 },
-          { icon: Wand2, label: "Extract audio", idx: 1 },
-          { icon: FileText, label: "Build transcript", idx: 2 },
-          { icon: Users, label: "Group speakers", idx: 3 },
+          { icon: Mic2, label: "Extract audio", idx: 1 },
+          { icon: FileText, label: "Transcript", idx: 2 },
+          { icon: Users, label: "Detected cast", idx: 3 },
+          { icon: UserPlus, label: "Create characters", idx: 4 },
         ].map((step) => {
           const active = pipelineActive === step.idx;
           return (
@@ -533,15 +738,15 @@ export default function UploadMatchPage() {
                   ? job.message
                   : mediaDone
                     ? "Import ready"
-                    : "Idle — ready when you are"}
+                    : "Idle. Ready when you are."}
               </h2>
             </div>
             {job ? (
               <Badge
                 tone={
-                  job.status === "done"
+                  normalizeJobStatus(job.status) === "done"
                     ? "success"
-                    : job.status === "failed"
+                    : normalizeJobStatus(job.status) === "failed"
                       ? "danger"
                       : "accent"
                 }
@@ -599,6 +804,22 @@ export default function UploadMatchPage() {
               {mediaDone.transcript_segment_count != null ? (
                 <p className="mt-1 text-xs text-muted">
                   Transcript segments: {mediaDone.transcript_segment_count}
+                </p>
+              ) : null}
+              {mediaDone.import_provider === "azure_video_indexer" ? (
+                <p className="mt-1 text-xs text-muted">
+                  Cast signal: Azure AI Video Indexer. Speaker tags reflect detected groups and likely recurring speakers, not guaranteed real-world identity.
+                </p>
+              ) : mediaDone.import_provider === "local" ? (
+                <p className="mt-1 text-xs text-muted">
+                  Cast signal: processed locally on this machine (fallback path).
+                  {mediaDone.fallback_reason != null &&
+                  mediaDone.fallback_reason !== "" ? (
+                    <>
+                      {" "}
+                      Reason: {mediaDone.fallback_reason}
+                    </>
+                  ) : null}
                 </p>
               ) : null}
               <p className="mt-2 text-xs text-muted">
@@ -769,27 +990,51 @@ export default function UploadMatchPage() {
           {mediaDone && transcriptFetchDone ? (
               <div className="mt-6 border-t border-white/[0.06] pt-6">
               <p className="mb-4 max-w-prose text-sm text-muted">
-                Speaker groups are an onboarding shortcut. Use them to name
-                voices and create characters, or skip straight to Characters and
-                Voice Studio.
+                This is your detected cast: each entry is a voice cluster from the
+                transcript. Rename, merge duplicates, ignore extras, or create
+                characters in one pass.
               </p>
+              {visibleCastGroups.length > 0 ? (
+                <div className="mb-4 rounded-xl bg-primary/10 px-4 py-3 ring-1 ring-primary/20">
+                  <p className="text-sm font-semibold text-foreground">
+                    You found {visibleCastGroups.length} likely cast{" "}
+                    {visibleCastGroups.length === 1 ? "voice" : "voices"}.
+                  </p>
+                  {pendingCastCount > 0 ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {pendingCastCount} still need a character card. Use checkboxes
+                      to create several at once.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400/90">
+                      Every visible voice has a character. Next: Voice Studio,
+                      then Replace Lines.
+                    </p>
+                  )}
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Users className="h-4 w-4 text-accent" />
                   <h3 className="text-sm font-semibold text-text">
-                    Speaker groups
+                    Detected cast
                   </h3>
                 </div>
                 {speakerGroupsLoading ? (
                   <Badge tone="accent">Loading…</Badge>
                 ) : (
-                  <Badge tone="default">{speakerGroups.length} speakers</Badge>
+                  <Badge tone="default">
+                    {visibleCastGroups.length} shown
+                    {ignoredLabels.size > 0
+                      ? ` · ${ignoredLabels.size} hidden`
+                      : ""}
+                  </Badge>
                 )}
               </div>
               {speakerGroupsError ? (
                 <div className="mt-3">
                   <ErrorBanner
-                    title="Speaker groups error"
+                    title="Cast detection"
                     detail={speakerGroupsError}
                   />
                 </div>
@@ -797,7 +1042,7 @@ export default function UploadMatchPage() {
               {charCreateError ? (
                 <div className="mt-3">
                   <ErrorBanner
-                    title="Character creation error"
+                    title="Character creation"
                     detail={charCreateError}
                   />
                 </div>
@@ -805,17 +1050,56 @@ export default function UploadMatchPage() {
               {speakerGroupsLoading ? (
                 <div className="mt-4 flex items-center gap-2 text-sm text-muted">
                   <Spinner className="h-4 w-4 border-t-canvas" />
-                  Loading speaker groups…
+                  Resolving detected cast…
                 </div>
               ) : null}
               {!speakerGroupsLoading && speakerGroups.length === 0 ? (
                 <p className="mt-3 text-sm text-muted">
-                  No speaker groups detected.
+                  No separate voices were detected. Try a clip with clearer
+                  turns, or add characters manually.
                 </p>
+              ) : null}
+              {!speakerGroupsLoading &&
+              speakerGroups.length > 0 &&
+              pendingCastCount > 0 ? (
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    disabled={
+                      bulkBusy || bulkSelected.size === 0 || !transcriptEpisodeId
+                    }
+                    onClick={() => void bulkCreateCharacters()}
+                  >
+                    {bulkBusy ? (
+                      <Spinner className="h-4 w-4 border-t-primary-foreground" />
+                    ) : null}
+                    Create selected ({bulkSelected.size})
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={bulkBusy}
+                    onClick={() => {
+                      const pending = visibleCastGroups
+                        .filter((x) => !createdChars[x.speaker_label])
+                        .map((x) => x.speaker_label);
+                      setBulkSelected(new Set(pending));
+                    }}
+                  >
+                    Select all pending
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setBulkSelected(new Set())}
+                  >
+                    Clear selection
+                  </Button>
+                </div>
               ) : null}
               {!speakerGroupsLoading && speakerGroups.length > 0 ? (
                 <ul className="mt-4 space-y-3">
-                  {speakerGroups.map((g) => (
+                  {visibleCastGroups.map((g) => (
                     <li
                       key={g.speaker_label}
                       id={speakerRowDomId(g.speaker_label)}
@@ -823,6 +1107,14 @@ export default function UploadMatchPage() {
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-border text-primary"
+                            checked={bulkSelected.has(g.speaker_label)}
+                            disabled={Boolean(createdChars[g.speaker_label])}
+                            onChange={() => toggleBulkLabel(g.speaker_label)}
+                            title="Include in bulk create"
+                          />
                           <Mic2 className="h-4 w-4 text-muted" />
                           {editingLabel === g.speaker_label ? (
                             <form
@@ -887,10 +1179,57 @@ export default function UploadMatchPage() {
                           >
                             {g.is_narrator
                               ? "Unmark narrator"
-                              : "Mark as narrator"}
+                              : "Mark narrator / off-screen"}
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => toggleIgnore(g.speaker_label)}
+                          >
+                            <EyeOff className="h-3 w-3" />
+                            Ignore for now
                           </Button>
                         </div>
                       </div>
+                      {(() => {
+                        const others = visibleCastGroups
+                          .filter((x) => x.speaker_label !== g.speaker_label)
+                          .map((x) => x.speaker_label);
+                        const pick =
+                          mergeTargetFor[g.speaker_label] ?? others[0] ?? "";
+                        return others.length > 0 ? (
+                          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-3">
+                            <span className="text-[11px] font-medium text-muted">
+                              Merge duplicate
+                            </span>
+                            <select
+                              className="rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-xs text-text outline-none focus:border-accent/40"
+                              value={pick}
+                              onChange={(e) =>
+                                setMergeTargetFor((m) => ({
+                                  ...m,
+                                  [g.speaker_label]: e.target.value,
+                                }))
+                              }
+                            >
+                              {others.map((lab) => (
+                                <option key={lab} value={lab}>
+                                  into {lab}
+                                </option>
+                              ))}
+                            </select>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              className="!px-2.5 !py-1 !text-xs"
+                              disabled={mergeBusy || !pick}
+                              onClick={() => void runMerge(g.speaker_label, pick)}
+                            >
+                              <GitMerge className="h-3 w-3" />
+                              Merge
+                            </Button>
+                          </div>
+                        ) : null;
+                      })()}
                       <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted">
                         <span>{g.segment_count} segments</span>
                         <span>{g.total_speaking_duration.toFixed(1)}s total</span>
@@ -970,6 +1309,41 @@ export default function UploadMatchPage() {
                     </li>
                   ))}
                 </ul>
+              ) : null}
+              {ignoredLabels.size > 0 ? (
+                <div className="mt-4 rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/[0.06]">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                    Hidden for now ({ignoredLabels.size})
+                  </p>
+                  <p className="mt-1 text-xs text-muted">
+                    These voices stay out of your main list. Restore anytime.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {[...ignoredLabels].map((lab) => (
+                      <button
+                        key={lab}
+                        type="button"
+                        className="rounded-full bg-white/[0.06] px-3 py-1 text-xs font-medium text-text ring-1 ring-white/[0.08] transition hover:bg-white/[0.1]"
+                        onClick={() => toggleIgnore(lab)}
+                      >
+                        Restore {lab}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {transcriptEpisodeId && transcriptSegments.length > 0 ? (
+                <div className="mt-4 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3">
+                  <p className="text-sm font-medium text-foreground">
+                    Transcript ready. Swap performances when your cast has voices.
+                  </p>
+                  <Link
+                    href={`/replace-lines?episode=${encodeURIComponent(transcriptEpisodeId)}`}
+                    className="mt-2 inline-flex text-sm font-semibold text-accent underline-offset-4 hover:underline"
+                  >
+                    Open Replace Lines
+                  </Link>
+                </div>
               ) : null}
             </div>
           ) : null}

@@ -7,7 +7,7 @@ from schemas.character import CharacterOut, CreateCharacterFromGroupBody
 from schemas.episode import EpisodeExportBody
 from schemas.job import JobOut
 from schemas.replacement import PatchReplacementBody, ReplaceSegmentBody, ReplacementOut
-from schemas.speaker_group import SpeakerGroupOut, SpeakerGroupRenameBody
+from schemas.speaker_group import SpeakerGroupMergeBody, SpeakerGroupOut, SpeakerGroupRenameBody
 from schemas.transcript import TranscriptOut, TranscriptSegmentOut
 from services import character_service, episode_service, episode_transcript_service, job_service
 from services import replacement_service
@@ -112,6 +112,42 @@ def rename_speaker_group(episode_id: str, speaker_label: str, body: SpeakerGroup
         sample_texts=updated.sample_texts,
         is_narrator=updated.is_narrator,
     )
+
+
+@router.post("/{episode_id}/speaker-groups/merge", response_model=list[SpeakerGroupOut])
+def merge_speaker_groups(episode_id: str, body: SpeakerGroupMergeBody):
+    eid = _episode_id(episode_id)
+    log.info(
+        "POST /episodes/%s/speaker-groups/merge from=%s into=%s",
+        eid,
+        body.from_label,
+        body.into_label,
+    )
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    if not episode_service.get_episode(eid):
+        raise HTTPException(status_code=404, detail="Episode not found")
+    ok = store.merge_speaker_labels(
+        eid,
+        body.from_label.strip(),
+        body.into_label.strip(),
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not merge: labels missing or invalid",
+        )
+    groups = store.list_speaker_groups(eid)
+    return [
+        SpeakerGroupOut(
+            speaker_label=g.speaker_label,
+            display_name=g.display_name,
+            segment_count=g.segment_count,
+            total_speaking_duration=g.total_speaking_duration,
+            sample_texts=g.sample_texts,
+            is_narrator=g.is_narrator,
+        )
+        for g in groups
+    ]
 
 
 @router.post("/{episode_id}/speaker-groups/{speaker_label}/create-character", response_model=CharacterOut)

@@ -7,7 +7,6 @@ import {
   ArrowUpRight,
   Film,
   FolderKanban,
-  Mic,
   MoreHorizontal,
   Plus,
   Sparkles,
@@ -51,15 +50,15 @@ type ProjStats = { total: number; voiced: number };
 
 function setupHint(s: ProjStats | undefined): string {
   if (!s || s.total === 0) {
-    return "Add or import characters";
+    return "Import video or add cast";
   }
   if (s.voiced === 0) {
-    return `${s.total} character(s), attach voices`;
+    return `${s.total} in cast · need voices`;
   }
   if (s.voiced < s.total) {
     return `Voices ${s.voiced}/${s.total}`;
   }
-  return "Voices ready · open Replace Lines";
+  return "Ready for Replace Lines";
 }
 
 function StatusPill({ status }: { status: string }) {
@@ -158,7 +157,7 @@ export default function ProjectsPage() {
             Projects
           </h1>
           <p className="mt-3 max-w-md text-[15px] leading-relaxed text-muted-foreground">
-            Start here: create a project, add characters, attach voices, then replace lines when you are ready.
+            One path: import footage, confirm the cast, attach voices, generate clips, then replace lines for the final mix.
           </p>
         </div>
 
@@ -258,36 +257,58 @@ export default function ProjectsPage() {
         <EmptyState
           icon={FolderKanban}
           title="No projects yet"
-          description="Create a project, then add characters, attach voices, and replace lines."
+          description="Create a production, then either import video to detect your cast or add characters by hand."
           action={
-            <Button type="button" onClick={() => setModalOpen(true)}>
-              Create project
-            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Link
+                href="/upload-match"
+                className="inline-flex h-11 items-center gap-2 rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-foreground shadow-soft transition hover:border-foreground hover:bg-foreground hover:text-background"
+              >
+                Start from video
+              </Link>
+              <Button type="button" onClick={() => setModalOpen(true)}>
+                New project (manual)
+              </Button>
+            </div>
           }
         />
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 pb-6 md:grid-cols-3">
-            {[
-              { icon: Sparkles, title: "Start blank", hint: "Empty project, add what you need", href: "/projects" },
-              { icon: Film, title: "Import from video", hint: "Detect speakers automatically", href: "/upload-match" },
-              { icon: Mic, title: "Clone a voice", hint: "Bring a sample into Voice Studio", href: "/voice-studio" },
-            ].map((q) => (
-              <Link
-                key={q.title}
-                href={q.href}
-                className="group flex items-center gap-4 rounded-2xl border border-border bg-surface p-4 text-left transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-md"
-              >
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <q.icon className="h-4 w-4" strokeWidth={2.25} />
-                </span>
-                <div className="flex-1">
-                  <div className="text-sm font-semibold text-foreground">{q.title}</div>
-                  <div className="text-xs text-muted-foreground">{q.hint}</div>
+          <div className="grid grid-cols-1 gap-4 pb-6 md:grid-cols-2">
+            <Link
+              href="/upload-match"
+              className="group relative overflow-hidden rounded-2xl border-2 border-primary/35 bg-gradient-to-br from-primary/15 via-surface to-surface p-6 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-lifted"
+            >
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-glow">
+                <Film className="h-5 w-5" strokeWidth={2.25} />
+              </span>
+              <div className="mt-4">
+                <div className="font-display text-lg font-semibold text-foreground">
+                  Start from video
                 </div>
-                <ArrowUpRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-              </Link>
-            ))}
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                  Import a clip, get a transcript, review detected cast, then turn voices into characters.
+                </p>
+              </div>
+              <ArrowUpRight className="absolute right-5 top-5 h-4 w-4 text-primary transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </Link>
+            <button
+              type="button"
+              onClick={() => setModalOpen(true)}
+              className="group flex flex-col rounded-2xl border border-border bg-surface p-6 text-left transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-md"
+            >
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-sunken text-foreground ring-1 ring-border">
+                <Sparkles className="h-5 w-5" strokeWidth={2.25} />
+              </span>
+              <div className="mt-4">
+                <div className="font-display text-lg font-semibold text-foreground">
+                  Start manually
+                </div>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                  Create a project and add characters yourself. You can import footage later anytime.
+                </p>
+              </div>
+            </button>
           </div>
 
           <div className="flex items-end justify-between pb-5">

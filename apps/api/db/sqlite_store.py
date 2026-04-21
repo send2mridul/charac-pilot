@@ -991,6 +991,49 @@ class SqliteStore:
             self._cx.commit()
         return target
 
+    def merge_speaker_labels(self, episode_id: str, from_label: str, into_label: str) -> bool:
+        """Reassign all transcript segments from from_label to into_label, then rebuild groups."""
+        fl = from_label.strip()
+        tl = into_label.strip()
+        if not fl or not tl or fl == tl:
+            return False
+        groups = self.list_speaker_groups(episode_id)
+        from_g = next((g for g in groups if g.speaker_label == fl), None)
+        to_g = next((g for g in groups if g.speaker_label == tl), None)
+        if not from_g or not to_g:
+            return False
+        segs = self.list_transcript_segments(episode_id)
+        new_segs: list[TranscriptSegmentRecord] = []
+        for s in segs:
+            lab = (s.speaker_label or "UNKNOWN").strip()
+            if lab == fl:
+                lab = tl
+            new_segs.append(
+                TranscriptSegmentRecord(
+                    segment_id=s.segment_id,
+                    episode_id=s.episode_id,
+                    start_time=s.start_time,
+                    end_time=s.end_time,
+                    text=s.text,
+                    speaker_label=lab,
+                )
+            )
+        ep = self.get_episode(episode_id)
+        lang = ep.transcript_language if ep else None
+        self.set_transcript_for_episode(episode_id, new_segs, language=lang)
+        self.build_speaker_groups(episode_id)
+        merged_narrator = from_g.is_narrator or to_g.is_narrator
+        display = to_g.display_name
+        if to_g.display_name == tl and from_g.display_name != fl:
+            display = from_g.display_name
+        self.rename_speaker_group(
+            episode_id,
+            tl,
+            display_name=display,
+            is_narrator=merged_narrator,
+        )
+        return True
+
     def locate_episode_upload_dir(self, episode_id: str) -> tuple[str, Path] | None:
         if not UPLOADS_ROOT.is_dir():
             log.debug("locate skip: UPLOADS_ROOT not a directory (%s)", UPLOADS_ROOT)

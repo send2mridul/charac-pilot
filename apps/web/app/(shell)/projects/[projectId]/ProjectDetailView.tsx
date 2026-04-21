@@ -56,38 +56,76 @@ export function ProjectDetailView({
   const importedEpisodes = episodes.filter((e) => e.segment_count > 0).length;
   const hasSegments = episodes.some((e) => e.segment_count > 0);
   const hasReplacementReady = voiced > 0 && hasSegments;
+  const hasImportedTranscript = importedEpisodes > 0;
+  const allVoiced =
+    charCount > 0 && characters.every((c) => Boolean(c.default_voice_id));
+  const hasFootageOrRoster = hasImportedTranscript || charCount > 0;
+  const castConfirmed = !hasImportedTranscript || charCount > 0;
 
   const checklist = useMemo(
     () => [
       {
-        id: "char",
-        label: "Add your first character",
-        done: charCount > 0,
-        href: "/characters",
+        id: "footage",
+        label: "Import video or add characters manually",
+        done: hasFootageOrRoster,
+        href: "/upload-match",
       },
       {
-        id: "import",
-        label: "Import from video (optional)",
-        done: importedEpisodes > 0,
+        id: "cast",
+        label: "Review detected cast and create characters",
+        done: castConfirmed,
         href: "/upload-match",
       },
       {
         id: "voice",
-        label: "Assign a voice in Voice Studio",
-        done: voiced > 0,
+        label: "Attach or design voices in Voice Studio",
+        done: charCount > 0 && allVoiced,
         href: "/voice-studio",
       },
       {
         id: "replace",
-        label: "Replace your first line",
+        label: "Replace lines with new performances",
         done: hasReplacementReady,
         href: "/replace-lines",
       },
     ],
-    [charCount, importedEpisodes, voiced, hasReplacementReady],
+    [hasFootageOrRoster, castConfirmed, charCount, allVoiced, hasReplacementReady],
   );
 
   const nextItem = checklist.find((c) => !c.done);
+
+  const nextSummary = useMemo(() => {
+    if (!nextItem) {
+      return {
+        title: "Production loop ready",
+        body: "Swap lines, iterate clips, and refine performances from here.",
+      };
+    }
+    if (nextItem.id === "footage") {
+      return {
+        title: "Choose how you start",
+        body:
+          "Import a clip to detect speakers and lines, or add characters by hand on the Characters page.",
+      };
+    }
+    if (nextItem.id === "cast") {
+      return {
+        title: "Confirm your detected cast",
+        body:
+          "Name each detected voice, merge duplicates if needed, and create characters for your roster.",
+      };
+    }
+    if (nextItem.id === "voice") {
+      return {
+        title: "Give your cast voices",
+        body: `${Math.max(0, charCount - voiced)} character(s) still need a voice. Open Voice Studio to assign or design.`,
+      };
+    }
+    return {
+      title: "Final pass: replace lines",
+      body: "Pick a line, pick a character with a voice, and generate new audio.",
+    };
+  }, [nextItem, charCount, voiced]);
 
   async function saveProject() {
     setSaving(true);
@@ -181,6 +219,31 @@ export function ProjectDetailView({
 
       {err ? <ErrorBanner title="Project" detail={err} /> : null}
 
+      {nextItem ? (
+        <div className="rounded-2xl border border-accent/30 bg-accent/10 px-5 py-4 ring-1 ring-accent/20">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent">
+            Next step
+          </p>
+          <p className="mt-1 text-base font-semibold text-text">{nextSummary.title}</p>
+          <p className="mt-1 text-sm text-muted">{nextSummary.body}</p>
+          <Link
+            href={nextItem.href}
+            className={`${buttonClass("primary", "mt-4 inline-flex px-4")}`}
+            onClick={() => setActiveProjectId(project.id)}
+          >
+            {nextItem.label}
+          </Link>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-5 py-4 ring-1 ring-emerald-500/20">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-400/90">
+            On track
+          </p>
+          <p className="mt-1 text-base font-semibold text-text">{nextSummary.title}</p>
+          <p className="mt-1 text-sm text-muted">{nextSummary.body}</p>
+        </div>
+      )}
+
       {editOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
@@ -244,10 +307,10 @@ export function ProjectDetailView({
       ) : null}
 
       <Panel>
-        <h2 className="text-sm font-semibold text-text">Setup checklist</h2>
+        <h2 className="text-sm font-semibold text-text">Production checklist</h2>
         <p className="mt-1 text-sm text-muted">
-          Follow these steps in order. The next recommended action is highlighted
-          below.
+          Import, build cast, attach voices, then replace lines. Completed steps
+          stay marked below.
         </p>
         <ul className="mt-4 space-y-2">
           {checklist.map((item) => (
@@ -275,7 +338,7 @@ export function ProjectDetailView({
         </ul>
         {nextItem ? (
           <p className="mt-4 text-sm text-text">
-            <span className="font-medium">Next: </span>
+            <span className="font-medium">Still to do: </span>
             <Link
               href={nextItem.href}
               className="text-accent underline-offset-4 hover:underline"
@@ -286,7 +349,8 @@ export function ProjectDetailView({
           </p>
         ) : (
           <p className="mt-4 text-sm text-emerald-400/90">
-            You are ready to replace lines and refine audio.
+            Core workflow complete. Keep iterating in Replace Lines and Voice
+            Studio.
           </p>
         )}
       </Panel>
@@ -331,32 +395,32 @@ export function ProjectDetailView({
 
         <div className="mt-6 flex flex-wrap gap-2">
           <Link
-            href="/characters"
+            href="/upload-match"
             className={buttonClass("primary", "px-4")}
             onClick={() => setActiveProjectId(project.id)}
           >
-            Add character
+            Import from Video
           </Link>
           <Link
-            href="/upload-match"
+            href="/characters"
             className={buttonClass("secondary", "px-4")}
             onClick={() => setActiveProjectId(project.id)}
           >
-            Import video
+            Characters
           </Link>
           <Link
             href="/voice-studio"
             className={buttonClass("secondary", "px-4")}
             onClick={() => setActiveProjectId(project.id)}
           >
-            Open Voice Studio
+            Voice Studio
           </Link>
           <Link
             href="/replace-lines"
             className={buttonClass("secondary", "px-4")}
             onClick={() => setActiveProjectId(project.id)}
           >
-            Open Replace Lines
+            Replace Lines
           </Link>
         </div>
       </Panel>

@@ -7,10 +7,11 @@
     "packages/*"
   ],
   "scripts": {
+    "kill:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/kill-dev-ports.ps1",
     "dev": "npm run dev -w web",
     "dev:web": "npm run dev -w web",
     "dev:clean": "node scripts/clean-web-next.cjs && npm run dev -w web",
-    "dev:api": "cd apps/api && .venv\\Scripts\\python.exe -m uvicorn main:app --reload --reload-exclude storage --host 127.0.0.1 --port 8000",
+    "dev:api": "cd apps/api && set PYTHONUNBUFFERED=1&& .venv\\Scripts\\python.exe -u -m uvicorn main:app --reload --reload-exclude storage --host 127.0.0.1 --port 8000 --log-level info --no-access-log",
     "dev:stack": "concurrently -n web,api -c cyan,magenta \"npm run dev:web\" \"npm run dev:api\"",
     "dev:stack:clean": "concurrently -n web,api -c cyan,magenta \"npm run dev:clean -w web\" \"npm run dev:api\"",
     "build": "npm run build -w web",
