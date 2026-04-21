@@ -129,19 +129,19 @@ def generate_preview(
         out_path = char_dir / f"{preview_id}.{ext}"
         try:
             duration_ms = _generate_elevenlabs(text, voice_id, style, out_path)
-            provider = "elevenlabs"
+            provider = "primary"
             log.info("elevenlabs preview ok id=%s dur=%dms", preview_id, duration_ms)
         except Exception as e:
             log.warning("elevenlabs failed, using stub: %s", e)
             ext = "wav"
             out_path = char_dir / f"{preview_id}.{ext}"
             duration_ms = _generate_silent_wav(out_path)
-            provider = "stub"
+            provider = "fallback"
     else:
         ext = "wav"
         out_path = char_dir / f"{preview_id}.{ext}"
         duration_ms = _generate_silent_wav(out_path)
-        provider = "stub"
+        provider = "fallback"
         log.info("stub preview (no ELEVENLABS_API_KEY) id=%s", preview_id)
 
     rel = out_path.resolve().relative_to(STORAGE_ROOT.resolve()).as_posix()
@@ -177,14 +177,14 @@ def synthesize_line_to_file(
                 out_mp3,
                 duration_ms,
             )
-            return duration_ms, "elevenlabs", False, out_mp3
+            return duration_ms, "primary", False, out_mp3
         except Exception as e:
             log.warning("synthesize_line_to_file elevenlabs failed, stub: %s", e)
             out_wav = out_base_no_ext.with_suffix(".wav")
             duration_ms = _generate_silent_wav(out_wav)
-            return duration_ms, "stub", True, out_wav
+            return duration_ms, "fallback", True, out_wav
 
     out_wav = out_base_no_ext.with_suffix(".wav")
     duration_ms = _generate_silent_wav(out_wav)
     log.info("synthesize_line_to_file stub (no API key) path=%s", out_wav)
-    return duration_ms, "stub", True, out_wav
+    return duration_ms, "fallback", True, out_wav

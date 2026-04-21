@@ -443,7 +443,7 @@ function ReplaceLinesContent() {
                     placeholder="e.g. whisper, urgent, dry"
                   />
                   <p className="mt-1 text-[11px] text-muted">
-                    Hints may behave differently depending on provider and model.
+                    Hints may behave differently depending on the active audio engine.
                   </p>
                 </div>
 

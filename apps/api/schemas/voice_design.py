@@ -22,7 +22,7 @@ class DesignVoiceBody(BaseModel):
 
 
 class DesignVoiceResponse(BaseModel):
-    source: Literal["elevenlabs", "fallback"]
+    source: Literal["primary", "fallback"]
     message: str | None = None
     preview_text_used: str = ""
     candidates: list[VoicePreviewCandidateOut] = []
@@ -47,7 +47,7 @@ class RemixVoiceBody(BaseModel):
 
 
 class RemixVoiceResponse(BaseModel):
-    source: Literal["elevenlabs", "fallback"]
+    source: Literal["primary", "fallback"]
     message: str | None = None
     preview_text_used: str = ""
     candidates: list[VoicePreviewCandidateOut] = []
@@ -58,4 +58,4 @@ class SaveCustomVoiceResult(BaseModel):
     voice_id: str
     voice_name: str
     source_type: str
-    provider: str = "elevenlabs"
+    provider: str = "primary"

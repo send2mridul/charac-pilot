@@ -16,7 +16,7 @@ class VoiceCatalogItem(BaseModel):
 
 class VoiceCatalogResponse(BaseModel):
     voices: list[VoiceCatalogItem]
-    source: Literal["elevenlabs", "local_fallback"]
+    source: Literal["primary", "local_fallback"]
     total: int
     page: int = 1
     page_size: int = 50

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 # Scene prompt for draft line generation (MVP cap; keep in sync with web).
 PROMPT_MAX_CHARS = 600
@@ -33,6 +33,29 @@ class CharacterOut(BaseModel):
     voice_description_meta: str | None = None
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("voice_provider", mode="before")
+    @classmethod
+    def _sanitize_voice_provider(cls, v: str | None):
+        if v is None:
+            return None
+        val = str(v).strip().lower()
+        if not val:
+            return None
+        if val in {"local_builtin", "local", "fallback"}:
+            return "fallback"
+        return "primary"
+
+    @field_serializer("voice_provider")
+    def _serialize_voice_provider(self, v: str | None):
+        if v is None:
+            return None
+        val = str(v).strip().lower()
+        if not val:
+            return None
+        if val in {"local_builtin", "local", "fallback"}:
+            return "fallback"
+        return "primary"
 
 
 class CreateCharacterFromGroupBody(BaseModel):
@@ -149,6 +172,8 @@ class GenerateDraftLinesOut(BaseModel):
     prompt: str
     generated_count: int
     lines: list[DraftLineOut]
+    provider_used: str = "fallback"
+    fallback_used: bool = False
 
 
 class ClipLineIn(BaseModel):

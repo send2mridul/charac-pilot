@@ -62,11 +62,17 @@ def _normalize_design_prompt(prompt: str) -> str:
     return out[:1000]
 
 
+def _safe_generation_error_message(action: str = "request") -> str:
+    if action == "remix":
+        return "Voice remix is unavailable right now. Please try again."
+    return "Voice design is unavailable right now. Please try again."
+
+
 def design_voice(body: DesignVoiceBody) -> DesignVoiceResponse:
     if not os.environ.get("ELEVENLABS_API_KEY"):
         return DesignVoiceResponse(
             source="fallback",
-            message="ELEVENLABS_API_KEY is not set. Voice Design requires a configured ElevenLabs API key.",
+            message="Voice service is not configured. Voice design is unavailable right now.",
             preview_text_used="",
             candidates=[],
         )
@@ -85,7 +91,7 @@ def design_voice(body: DesignVoiceBody) -> DesignVoiceResponse:
             log.warning("voice design failed: %s", e)
             return DesignVoiceResponse(
                 source="fallback",
-                message=str(e)[:400],
+                message=_safe_generation_error_message("design"),
                 preview_text_used="",
                 candidates=[],
                 safe_example_prompts=_SAFE_EXAMPLE_PROMPTS,
@@ -141,7 +147,7 @@ def design_voice(body: DesignVoiceBody) -> DesignVoiceResponse:
         ]
         log.info("voice design ok candidates=%s", len(cands))
         return DesignVoiceResponse(
-            source="elevenlabs",
+            source="primary",
             message=None,
             preview_text_used=text_used,
             candidates=cands,
@@ -153,7 +159,7 @@ def design_voice(body: DesignVoiceBody) -> DesignVoiceResponse:
         log.warning("voice design failed: %s", e)
         return DesignVoiceResponse(
             source="fallback",
-            message=str(e)[:400],
+            message=_safe_generation_error_message("design"),
             preview_text_used="",
             candidates=[],
             safe_example_prompts=_SAFE_EXAMPLE_PROMPTS,
@@ -164,7 +170,7 @@ def remix_voice(voice_id: str, body: RemixVoiceBody) -> RemixVoiceResponse:
     if not os.environ.get("ELEVENLABS_API_KEY"):
         return RemixVoiceResponse(
             source="fallback",
-            message="ELEVENLABS_API_KEY is not set. Voice Remix requires a configured ElevenLabs API key.",
+            message="Voice service is not configured. Voice remix is unavailable right now.",
             preview_text_used="",
             candidates=[],
         )
@@ -186,7 +192,7 @@ def remix_voice(voice_id: str, body: RemixVoiceBody) -> RemixVoiceResponse:
         ]
         log.info("voice remix ok base=%s candidates=%s", voice_id[:12], len(cands))
         return RemixVoiceResponse(
-            source="elevenlabs",
+            source="primary",
             message=None,
             preview_text_used=text_used,
             candidates=cands,
@@ -195,7 +201,7 @@ def remix_voice(voice_id: str, body: RemixVoiceBody) -> RemixVoiceResponse:
         log.warning("voice remix failed: %s", e)
         return RemixVoiceResponse(
             source="fallback",
-            message=str(e)[:400],
+            message=_safe_generation_error_message("remix"),
             preview_text_used="",
             candidates=[],
         )
@@ -203,7 +209,7 @@ def remix_voice(voice_id: str, body: RemixVoiceBody) -> RemixVoiceResponse:
 
 def save_custom_voice(body: SaveCustomVoiceBody) -> SaveCustomVoiceResult:
     if not os.environ.get("ELEVENLABS_API_KEY"):
-        raise ValueError("ELEVENLABS_API_KEY is not set")
+        raise ValueError("Voice service is not configured")
     st = body.source_type
     if st == "remixed" and not (body.parent_voice_id or "").strip():
         raise ValueError("parent_voice_id is required when saving a remixed voice")
@@ -221,13 +227,13 @@ def save_custom_voice(body: SaveCustomVoiceBody) -> SaveCustomVoiceResult:
         if isinstance(nested, dict):
             vid = nested.get("voice_id") or nested.get("id")
     if not vid:
-        raise ValueError("ElevenLabs did not return voice_id")
+        raise ValueError("Voice service did not return a voice identifier")
     parent = body.parent_voice_id if st == "remixed" else None
     updated = character_service.update_character(
         body.character_id,
         default_voice_id=vid,
         voice_display_name=body.voice_name.strip(),
-        voice_provider="elevenlabs",
+        voice_provider="primary",
         voice_source_type=st,
         voice_parent_id=parent,
         voice_description_meta=body.voice_description.strip(),
@@ -245,5 +251,5 @@ def save_custom_voice(body: SaveCustomVoiceBody) -> SaveCustomVoiceResult:
         voice_id=vid,
         voice_name=body.voice_name.strip(),
         source_type=st,
-        provider="elevenlabs",
+        provider="primary",
     )

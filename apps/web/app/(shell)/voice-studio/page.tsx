@@ -326,7 +326,7 @@ function VoiceStudioContent() {
       const updated = await api.assignVoice(selected.id, {
         voice_id: chosenVoiceId,
         provider:
-          voiceHub.source === "elevenlabs" ? "elevenlabs" : "local_builtin",
+          voiceHub.source === "primary" ? "primary" : "local_builtin",
         display_name: picked?.display_name ?? chosenVoiceId,
         voice_source_type: "catalog",
       });
@@ -684,7 +684,7 @@ function VoiceStudioContent() {
             </h2>
             <p className="mt-2 text-[11px] leading-relaxed text-muted">
               Voices in use anywhere in this project. Attach the same catalog
-              voice to another character from Browse when your provider allows it.
+              voice to another character from Browse when your engine settings allow it.
             </p>
             <ul className="mt-3 max-h-40 space-y-2 overflow-y-auto text-xs">
               {characters.every((c) => !c.default_voice_id) ? (
@@ -1174,12 +1174,12 @@ function VoiceStudioContent() {
                         </div>
                         <Badge
                           tone={
-                            preview.provider === "elevenlabs"
+                            preview.provider === "primary"
                               ? "success"
                               : "default"
                           }
                         >
-                          {preview.provider === "stub"
+                          {preview.provider === "fallback"
                             ? "fallback"
                             : preview.provider}
                         </Badge>
@@ -1197,9 +1197,9 @@ function VoiceStudioContent() {
                         className="mt-3 w-full"
                         src={mediaUrl(preview.audio_url.replace(/^\/media\//, ""))}
                       />
-                      {preview.provider === "stub" ? (
+                      {preview.provider === "fallback" ? (
                         <p className="mt-2 text-[11px] text-amber-400">
-                          Fallback audio. Set ELEVENLABS_API_KEY for live speech.
+                          Backup audio was used because the primary voice service is unavailable.
                         </p>
                       ) : null}
                     </div>
@@ -1261,13 +1261,13 @@ function VoiceStudioContent() {
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge
                           tone={
-                            voiceHub.source === "elevenlabs"
+                            voiceHub.source === "primary"
                               ? "success"
                               : "default"
                           }
                         >
-                          {voiceHub.source === "elevenlabs"
-                            ? "Live library"
+                          {voiceHub.source === "primary"
+                            ? "Primary library"
                             : "Backup catalog"}
                         </Badge>
                         <span className="text-[11px] text-muted">
@@ -1475,7 +1475,7 @@ function VoiceStudioContent() {
                         ) : null}
                       </div>
                     ) : null}
-                    {designResult?.source === "elevenlabs" &&
+                    {designResult?.source === "primary" &&
                     designResult.normalized_retry_used ? (
                       <p className="text-[11px] text-muted">
                         We adjusted the prompt for compatibility.

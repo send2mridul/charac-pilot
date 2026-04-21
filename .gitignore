@@ -4,6 +4,7 @@ dist
 .turbo
 .env
 .env.local
+apps/api/.env
 __pycache__
 *.pyc
 .venv

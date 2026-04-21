@@ -17,7 +17,7 @@ ELEVENLABS_VOICES_URL = "https://api.elevenlabs.io/v1/voices"
 
 # Cache full mapped list to avoid hammering the API (TTL seconds).
 _CACHE_TTL_SEC = 120.0
-_cache: tuple[list[dict[str, Any]], Literal["elevenlabs", "local_fallback"], float] | None = None
+_cache: tuple[list[dict[str, Any]], Literal["primary", "local_fallback"], float] | None = None
 
 LOCAL_VOICES: list[dict[str, Any]] = [
     {
@@ -114,7 +114,7 @@ def _fetch_elevenlabs_raw() -> list[dict[str, Any]]:
     return [_map_elevenlabs_voice(v) for v in voices if isinstance(v, dict) and v.get("voice_id")]
 
 
-def get_voice_pool() -> tuple[list[dict[str, Any]], Literal["elevenlabs", "local_fallback"], str | None]:
+def get_voice_pool() -> tuple[list[dict[str, Any]], Literal["primary", "local_fallback"], str | None]:
     """Return (voices, source, fallback_message). Uses cache when ElevenLabs succeeds."""
     global _cache
     now = time.monotonic()
@@ -122,24 +122,24 @@ def get_voice_pool() -> tuple[list[dict[str, Any]], Literal["elevenlabs", "local
     if _cache is not None:
         voices, source, ts = _cache
         if now - ts < _CACHE_TTL_SEC:
-            return voices, source, None if source == "elevenlabs" else "Using built-in catalog (cached)."
+            return voices, source, None if source == "primary" else "Using built-in catalog (cached)."
 
     key = _elevenlabs_key()
     if not key:
         log.info("voice catalog: no ELEVENLABS_API_KEY, using local fallback")
         _cache = (LOCAL_VOICES.copy(), "local_fallback", now)
-        return _cache[0], "local_fallback", "No API key — showing built-in voices only."
+        return _cache[0], "local_fallback", "Primary voice service is not configured. Showing built-in voices only."
 
     try:
         mapped = _fetch_elevenlabs_raw()
         if not mapped:
             log.warning("voice catalog: ElevenLabs returned no voices, using local fallback")
             _cache = (LOCAL_VOICES.copy(), "local_fallback", now)
-            return _cache[0], "local_fallback", "ElevenLabs returned no voices — using built-in catalog."
+            return _cache[0], "local_fallback", "Primary voice service returned no voices. Using built-in catalog."
         mapped.sort(key=lambda x: (x.get("display_name") or "").lower())
-        _cache = (mapped, "elevenlabs", now)
+        _cache = (mapped, "primary", now)
         log.info("voice catalog: loaded %d voices from ElevenLabs", len(mapped))
-        return mapped, "elevenlabs", None
+        return mapped, "primary", None
     except Exception as e:
         log.warning("voice catalog: ElevenLabs fetch failed: %s", e)
         _cache = (LOCAL_VOICES.copy(), "local_fallback", now)
@@ -147,13 +147,12 @@ def get_voice_pool() -> tuple[list[dict[str, Any]], Literal["elevenlabs", "local
         hint = ""
         if "voices_read" in err or "missing_permissions" in err:
             hint = (
-                " Your ElevenLabs API key needs the voices_read permission "
-                "(key settings) to list voices."
+                " The configured key may be missing required voice-list permissions."
             )
         return (
             _cache[0],
             "local_fallback",
-            f"ElevenLabs unavailable ({err[:180]}) — using built-in catalog.{hint}",
+            f"Primary voice service is currently unavailable. Using built-in catalog.{hint}",
         )
 
 

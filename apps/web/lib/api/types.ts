@@ -52,7 +52,7 @@ export type VoiceCatalogItem = {
   suggested_use: string;
 };
 
-export type VoiceCatalogSource = "elevenlabs" | "local_fallback";
+export type VoiceCatalogSource = "primary" | "local_fallback";
 
 export type VoiceCatalogResponse = {
   voices: VoiceCatalogItem[];
@@ -64,7 +64,7 @@ export type VoiceCatalogResponse = {
   message: string | null;
 };
 
-export type VoiceDesignSource = "elevenlabs" | "fallback";
+export type VoiceDesignSource = "primary" | "fallback";
 
 export type VoicePreviewCandidateDto = {
   generated_voice_id: string;
@@ -150,6 +150,8 @@ export type GenerateDraftLinesResponseDto = {
   prompt: string;
   generated_count: number;
   lines: DraftLineDto[];
+  provider_used?: "ai" | "fallback" | string;
+  fallback_used?: boolean;
 };
 
 export type JobDto = {

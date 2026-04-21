@@ -26,6 +26,15 @@ def _to_items(raw: list[dict]) -> list[VoiceCatalogItem]:
     return [VoiceCatalogItem(**v) for v in raw]
 
 
+def _safe_voice_error_message(msg: str) -> str:
+    low = (msg or "").lower()
+    if "character not found" in low:
+        return "Character not found"
+    if "parent_voice_id" in low:
+        return "parent_voice_id is required when saving a remixed voice"
+    return "Voice engine request could not be completed."
+
+
 @router.post("/design", response_model=DesignVoiceResponse)
 def post_voice_design(body: DesignVoiceBody):
     """Generate preview candidates from a text description (ElevenLabs Voice Design)."""
@@ -39,7 +48,8 @@ def post_save_designed_voice(body: SaveCustomVoiceBody):
     try:
         return voice_design_service.save_custom_voice(payload)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        log.warning("voice design/save failed: %s", e)
+        raise HTTPException(status_code=400, detail=_safe_voice_error_message(str(e))) from e
 
 
 @router.post("/remix/save", response_model=SaveCustomVoiceResult)
@@ -54,7 +64,8 @@ def post_save_remixed_voice(body: SaveCustomVoiceBody):
     try:
         return voice_design_service.save_custom_voice(payload)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        log.warning("voice remix/save failed: %s", e)
+        raise HTTPException(status_code=400, detail=_safe_voice_error_message(str(e))) from e
 
 
 @router.post("/{voice_id}/remix", response_model=RemixVoiceResponse)

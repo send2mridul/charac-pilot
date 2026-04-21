@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 
 class ReplacementOut(BaseModel):
@@ -20,6 +20,29 @@ class ReplacementOut(BaseModel):
     fallback_used: bool
     created_at: str
     updated_at: str
+
+    @field_validator("provider_used", mode="before")
+    @classmethod
+    def _sanitize_provider_used(cls, v: str | None) -> str:
+        val = (str(v or "").strip().lower())
+        if not val:
+            return "fallback"
+        if val in {"fallback", "local", "local_builtin", "stub"}:
+            return "fallback"
+        if val in {"ai"}:
+            return "ai"
+        return "primary"
+
+    @field_serializer("provider_used")
+    def _serialize_provider_used(self, v: str) -> str:
+        val = (str(v or "").strip().lower())
+        if not val:
+            return "fallback"
+        if val in {"fallback", "local", "local_builtin", "stub"}:
+            return "fallback"
+        if val in {"ai"}:
+            return "ai"
+        return "primary"
 
 
 class ReplaceSegmentBody(BaseModel):
