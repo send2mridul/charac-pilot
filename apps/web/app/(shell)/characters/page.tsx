@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ExternalLink,
   ImageIcon,
+  Mic2,
   Pencil,
   Play,
   Plus,
@@ -684,7 +685,25 @@ export default function CharactersPage() {
                           </div>
                         </>
                       ) : (
-                        <p className="text-xs text-muted-foreground">No voice yet. Attach one in Voice Studio.</p>
+                        <div className="space-y-3">
+                          <p className="text-xs text-muted-foreground">
+                            No voice attached yet—this character is on the roster
+                            but still needs a voice.
+                          </p>
+                          <Link
+                            href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=voice&focus=attach`}
+                            className="group inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-teal px-4 text-sm font-semibold text-primary-foreground shadow-glow transition hover:opacity-95"
+                          >
+                            <Mic2 className="h-4 w-4" />
+                            Attach a voice
+                          </Link>
+                          <Link
+                            href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=voice`}
+                            className="block text-center text-[11px] font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                          >
+                            Open in Voice Studio
+                          </Link>
+                        </div>
                       )}
                     </div>
 

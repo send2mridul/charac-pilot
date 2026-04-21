@@ -1,18 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import Link from "next/link";
 import {
   CheckCircle2,
-  EyeOff,
   FileText,
   FileVideo,
   GitMerge,
   Mic2,
+  MoreHorizontal,
   Pencil,
   UploadCloud,
   UserPlus,
   Users,
+  Volume2,
   Wand2,
 } from "lucide-react";
 import { api } from "@/lib/api/client";
@@ -86,7 +93,12 @@ function resolveEpisodeIdForTranscript(
 ): string | null {
   const fromMedia = media?.episode_id?.trim();
   if (fromMedia) return fromMedia;
-  if (normalizeJobStatus(job?.status) !== "done" || !job.result || typeof job.result !== "object") {
+  if (
+    !job ||
+    normalizeJobStatus(job.status) !== "done" ||
+    !job.result ||
+    typeof job.result !== "object"
+  ) {
     return null;
   }
   const eid = (job.result as Record<string, unknown>).episode_id;
@@ -147,11 +159,11 @@ export default function UploadMatchPage() {
     useState<string | null>(null);
   const [ignoredLabels, setIgnoredLabels] = useState<Set<string>>(new Set());
   const [mergeBusy, setMergeBusy] = useState(false);
-  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
-  const [bulkBusy, setBulkBusy] = useState(false);
   const [mergeTargetFor, setMergeTargetFor] = useState<Record<string, string>>(
     {},
   );
+  /** Project roster — used to know if any character has a voice (Replace Lines gating). */
+  const [projectRoster, setProjectRoster] = useState<CharacterDto[]>([]);
 
   const storageKey = activeProjectId
     ? `castvoice:import-context:${activeProjectId}`
@@ -210,7 +222,6 @@ export default function UploadMatchPage() {
     setCreatedChars({});
     setCharCreateError(null);
     setSelectedTranscriptSegmentId(null);
-    setBulkSelected(new Set());
     setMergeTargetFor({});
     setPhase("uploading");
     setUploadRatio(0);
@@ -363,6 +374,24 @@ export default function UploadMatchPage() {
     };
   }, [transcriptEpisodeId, phase, transcriptFetchDone]);
 
+  useEffect(() => {
+    if (!activeProjectId || phase !== "done") {
+      setProjectRoster([]);
+      return;
+    }
+    let cancelled = false;
+    void api.listCharacters(activeProjectId).then((rows) => {
+      if (!cancelled) setProjectRoster(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, phase, createdChars]);
+
+  const anyCharacterHasVoice = projectRoster.some((c) =>
+    Boolean(c.default_voice_id),
+  );
+
   async function handleRename(label: string, displayName: string) {
     const ep = transcriptEpisodeId;
     if (!ep) return;
@@ -443,11 +472,6 @@ export default function UploadMatchPage() {
         n.delete(fromLabel);
         return n;
       });
-      setBulkSelected((prev) => {
-        const n = new Set(prev);
-        n.delete(fromLabel);
-        return n;
-      });
       setMergeTargetFor((prev) => {
         const next = { ...prev };
         delete next[fromLabel];
@@ -470,58 +494,11 @@ export default function UploadMatchPage() {
       else n.add(label);
       return n;
     });
-    setBulkSelected((prev) => {
-      const n = new Set(prev);
-      n.delete(label);
-      return n;
-    });
-  }
-
-  function toggleBulkLabel(label: string) {
-    if (createdChars[label]) return;
-    setBulkSelected((prev) => {
-      const n = new Set(prev);
-      if (n.has(label)) n.delete(label);
-      else n.add(label);
-      return n;
-    });
-  }
-
-  async function bulkCreateCharacters() {
-    const ep = transcriptEpisodeId;
-    if (!ep || bulkSelected.size === 0) return;
-    setBulkBusy(true);
-    setCharCreateError(null);
-    try {
-      for (const label of bulkSelected) {
-        if (createdChars[label]) continue;
-        const g = speakerGroups.find((x) => x.speaker_label === label);
-        const name =
-          (g?.display_name && g.display_name !== g.speaker_label
-            ? g.display_name
-            : g?.display_name || label) || label;
-        const c = await api.createCharacterFromGroup(ep, label, {
-          name: name.trim() || label,
-          project_id: activeProjectId || undefined,
-        });
-        setCreatedChars((prev) => ({ ...prev, [label]: c }));
-      }
-      setBulkSelected(new Set());
-    } catch (e) {
-      setCharCreateError(
-        e instanceof ApiError ? e.message : "Bulk create failed",
-      );
-    } finally {
-      setBulkBusy(false);
-    }
   }
 
   const visibleCastGroups = speakerGroups.filter(
     (g) => !ignoredLabels.has(g.speaker_label),
   );
-  const pendingCastCount = visibleCastGroups.filter(
-    (g) => !createdChars[g.speaker_label],
-  ).length;
 
   const showTranscriptSpinner =
     (!transcriptFetchDone && !transcriptError) || transcriptLoading;
@@ -560,7 +537,8 @@ export default function UploadMatchPage() {
             Import from Video
           </h1>
           <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-muted-foreground">
-            Upload a clip, get a transcript, review the detected cast, then turn each voice into a character. Add more characters manually anytime on the Characters page.
+            Upload a clip, review detected speakers, create characters, then attach
+            voices in Voice Studio. Replace Lines comes after your cast has voices.
           </p>
         </div>
       </div>
@@ -571,7 +549,7 @@ export default function UploadMatchPage() {
           { icon: Mic2, label: "Extract audio", idx: 1 },
           { icon: FileText, label: "Transcript", idx: 2 },
           { icon: Users, label: "Detected cast", idx: 3 },
-          { icon: UserPlus, label: "Create characters", idx: 4 },
+          { icon: UserPlus, label: "Cast & voices", idx: 4 },
         ].map((step) => {
           const active = pipelineActive === step.idx;
           return (
@@ -842,8 +820,15 @@ export default function UploadMatchPage() {
               </div>
 
               <div className="mt-6 border-t border-white/[0.06] pt-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-sm font-semibold text-text">Transcript</h3>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 max-w-xl">
+                    <h3 className="text-sm font-semibold text-text">
+                      Transcript
+                    </h3>
+                    <p className="mt-1 text-xs leading-relaxed text-muted">
+                      Timestamp, speaker tag, and line text.
+                    </p>
+                  </div>
                   {showTranscriptSpinner ? (
                     <Badge tone="accent">Loading…</Badge>
                   ) : (
@@ -874,7 +859,7 @@ export default function UploadMatchPage() {
                   </p>
                 ) : null}
                 {transcriptFetchDone && transcriptSegments.length > 0 ? (
-                  <ul className="mt-4 max-h-80 space-y-2 overflow-y-auto rounded-xl bg-white/[0.02] p-2 ring-1 ring-white/[0.06]">
+                  <ul className="mt-4 max-h-96 space-y-1 overflow-y-auto rounded-lg bg-white/[0.015] p-2 ring-1 ring-white/[0.05]">
                     {transcriptSegments.map((row) => {
                       const group = speakerGroups.find(
                         (g) => g.speaker_label === row.speaker_label,
@@ -882,101 +867,63 @@ export default function UploadMatchPage() {
                       const label =
                         group?.display_name ?? row.speaker_label ?? "Unknown";
                       const ep = transcriptEpisodeId;
-                      const canSpeaker = Boolean(row.speaker_label);
                       const sel = selectedTranscriptSegmentId === row.segment_id;
                       return (
                         <li
                           key={row.segment_id}
-                          className={`rounded-lg text-sm ring-1 transition hover:bg-white/[0.02] ${
-                            sel
-                              ? "bg-accent/10 ring-accent/35"
-                              : "ring-transparent"
+                          className={`rounded-md text-sm transition ${
+                            sel ? "bg-accent/10 ring-1 ring-accent/30" : ""
                           }`}
                         >
-                          <button
-                            type="button"
-                            className="w-full px-3 py-2 text-left"
-                            onClick={() =>
-                              setSelectedTranscriptSegmentId(row.segment_id)
-                            }
-                          >
-                            <div className="flex flex-wrap items-baseline justify-between gap-2">
-                              <span className="font-mono text-[11px] text-muted">
-                                {formatTimecode(row.start_time)} to{" "}
-                                {formatTimecode(row.end_time)}
-                              </span>
-                              <Badge
-                                tone={
-                                  group?.is_narrator
-                                    ? "violet"
-                                    : row.speaker_label?.startsWith("SPEAKER_")
-                                      ? "accent"
-                                      : "default"
-                                }
-                              >
-                                {label}
-                              </Badge>
-                            </div>
-                            <p className="mt-1 text-text">{row.text}</p>
-                          </button>
-                          <div
-                            className="flex flex-wrap gap-2 border-t border-white/[0.06] px-3 py-2"
-                            onClick={(e) => e.stopPropagation()}
-                          >
+                          <div className="flex flex-col gap-1.5 px-2.5 py-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 text-left"
+                              onClick={() =>
+                                setSelectedTranscriptSegmentId(row.segment_id)
+                              }
+                            >
+                              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                <span className="font-mono text-[11px] text-muted">
+                                  {formatTimecode(row.start_time)} –{" "}
+                                  {formatTimecode(row.end_time)}
+                                </span>
+                                <Badge
+                                  tone={
+                                    group?.is_narrator
+                                      ? "violet"
+                                      : row.speaker_label?.startsWith(
+                                            "SPEAKER_",
+                                          )
+                                        ? "accent"
+                                        : "default"
+                                  }
+                                >
+                                  {label}
+                                </Badge>
+                              </div>
+                              <p className="mt-1 text-[13px] leading-snug text-text">
+                                {row.text}
+                              </p>
+                            </button>
                             {ep ? (
                               <Link
                                 href={`/replace-lines?episode=${encodeURIComponent(ep)}&segment=${encodeURIComponent(row.segment_id)}`}
-                                className="inline-flex items-center rounded-lg bg-white/[0.06] px-2.5 py-1 text-xs font-medium text-text ring-1 ring-white/[0.08] transition hover:bg-white/[0.1]"
+                                title={
+                                  anyCharacterHasVoice
+                                    ? "Jump to this line in Replace Lines"
+                                    : "Tip: attach voices in Voice Studio first for the best Replace Lines workflow"
+                                }
+                                className={`inline-flex shrink-0 items-center justify-center self-start rounded-md px-2.5 py-1 text-[11px] font-medium ring-1 transition sm:mt-0.5 ${
+                                  anyCharacterHasVoice
+                                    ? "bg-white/[0.06] text-text ring-white/[0.08] hover:bg-white/[0.1]"
+                                    : "bg-white/[0.02] text-muted-foreground ring-white/[0.06] hover:bg-white/[0.04]"
+                                }`}
+                                onClick={(e: MouseEvent) => e.stopPropagation()}
                               >
                                 Use in Replace Lines
                               </Link>
                             ) : null}
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              className="!px-2.5 !py-1 !text-xs"
-                              disabled={!canSpeaker}
-                              onClick={() => {
-                                const lab = row.speaker_label;
-                                if (!lab) return;
-                                setSelectedTranscriptSegmentId(row.segment_id);
-                                setCreatingLabel(lab);
-                                const g = speakerGroups.find(
-                                  (x) => x.speaker_label === lab,
-                                );
-                                setCharNameInput(
-                                  g && g.display_name !== lab
-                                    ? g.display_name
-                                    : "",
-                                );
-                                window.requestAnimationFrame(() => {
-                                  document
-                                    .getElementById(speakerRowDomId(lab))
-                                    ?.scrollIntoView({
-                                      behavior: "smooth",
-                                      block: "center",
-                                    });
-                                });
-                              }}
-                            >
-                              <UserPlus className="h-3 w-3" />
-                              Create character from speaker
-                            </Button>
-                            {group?.is_narrator ? null : (
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                className="!px-2.5 !py-1 !text-xs"
-                                disabled={!canSpeaker}
-                                onClick={() => {
-                                  const lab = row.speaker_label;
-                                  if (!lab) return;
-                                  void handleNarrator(lab, true);
-                                }}
-                              >
-                                Mark as narrator
-                              </Button>
-                            )}
                           </div>
                         </li>
                       );
@@ -988,45 +935,28 @@ export default function UploadMatchPage() {
           ) : null}
 
           {mediaDone && transcriptFetchDone ? (
-              <div className="mt-6 border-t border-white/[0.06] pt-6">
-              <p className="mb-4 max-w-prose text-sm text-muted">
-                This is your detected cast: each entry is a voice cluster from the
-                transcript. Rename, merge duplicates, ignore extras, or create
-                characters in one pass.
-              </p>
-              {visibleCastGroups.length > 0 ? (
-                <div className="mb-4 rounded-xl bg-primary/10 px-4 py-3 ring-1 ring-primary/20">
-                  <p className="text-sm font-semibold text-foreground">
-                    You found {visibleCastGroups.length} likely cast{" "}
-                    {visibleCastGroups.length === 1 ? "voice" : "voices"}.
-                  </p>
-                  {pendingCastCount > 0 ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {pendingCastCount} still need a character card. Use checkboxes
-                      to create several at once.
+              <div className="mt-8 border-t border-white/[0.08] pt-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 max-w-xl items-start gap-2">
+                  <Users className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+                  <div>
+                    <h3 className="text-sm font-semibold text-text">
+                      Detected cast
+                    </h3>
+                    <p className="mt-1 text-xs leading-relaxed text-muted">
+                      Rename if needed, then create a character or skip. Voice
+                      Studio is next after you create someone.
                     </p>
-                  ) : (
-                    <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400/90">
-                      Every visible voice has a character. Next: Voice Studio,
-                      then Replace Lines.
-                    </p>
-                  )}
-                </div>
-              ) : null}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 text-accent" />
-                  <h3 className="text-sm font-semibold text-text">
-                    Detected cast
-                  </h3>
+                  </div>
                 </div>
                 {speakerGroupsLoading ? (
                   <Badge tone="accent">Loading…</Badge>
                 ) : (
                   <Badge tone="default">
-                    {visibleCastGroups.length} shown
+                    {visibleCastGroups.length} speaker
+                    {visibleCastGroups.length === 1 ? "" : "s"}
                     {ignoredLabels.size > 0
-                      ? ` · ${ignoredLabels.size} hidden`
+                      ? ` · ${ignoredLabels.size} skipped`
                       : ""}
                   </Badge>
                 )}
@@ -1059,73 +989,35 @@ export default function UploadMatchPage() {
                   turns, or add characters manually.
                 </p>
               ) : null}
-              {!speakerGroupsLoading &&
-              speakerGroups.length > 0 &&
-              pendingCastCount > 0 ? (
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    disabled={
-                      bulkBusy || bulkSelected.size === 0 || !transcriptEpisodeId
-                    }
-                    onClick={() => void bulkCreateCharacters()}
-                  >
-                    {bulkBusy ? (
-                      <Spinner className="h-4 w-4 border-t-primary-foreground" />
-                    ) : null}
-                    Create selected ({bulkSelected.size})
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={bulkBusy}
-                    onClick={() => {
-                      const pending = visibleCastGroups
-                        .filter((x) => !createdChars[x.speaker_label])
-                        .map((x) => x.speaker_label);
-                      setBulkSelected(new Set(pending));
-                    }}
-                  >
-                    Select all pending
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => setBulkSelected(new Set())}
-                  >
-                    Clear selection
-                  </Button>
-                </div>
-              ) : null}
               {!speakerGroupsLoading && speakerGroups.length > 0 ? (
-                <ul className="mt-4 space-y-3">
-                  {visibleCastGroups.map((g) => (
+                <div className="mt-4 rounded-xl bg-white/[0.03] p-3 ring-1 ring-accent/20 sm:p-3">
+                  <ul className="space-y-2">
+                  {visibleCastGroups.map((g) => {
+                    const created = createdChars[g.speaker_label];
+                    const others = visibleCastGroups
+                      .filter((x) => x.speaker_label !== g.speaker_label)
+                      .map((x) => x.speaker_label);
+                    const mergePick =
+                      mergeTargetFor[g.speaker_label] ?? others[0] ?? "";
+                    return (
                     <li
                       key={g.speaker_label}
                       id={speakerRowDomId(g.speaker_label)}
-                      className="scroll-mt-24 rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/[0.06]"
+                      className="scroll-mt-24 rounded-xl bg-white/[0.02] p-3 ring-1 ring-white/[0.06]"
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-border text-primary"
-                            checked={bulkSelected.has(g.speaker_label)}
-                            disabled={Boolean(createdChars[g.speaker_label])}
-                            onChange={() => toggleBulkLabel(g.speaker_label)}
-                            title="Include in bulk create"
-                          />
-                          <Mic2 className="h-4 w-4 text-muted" />
+                      <div className="flex flex-wrap items-start gap-2">
+                        <Mic2 className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+                        <div className="min-w-0 flex-1">
                           {editingLabel === g.speaker_label ? (
                             <form
-                              className="flex items-center gap-2"
+                              className="flex flex-wrap items-center gap-2"
                               onSubmit={(e) => {
                                 e.preventDefault();
                                 void handleRename(g.speaker_label, editValue);
                               }}
                             >
                               <input
-                                className="rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                                className="min-w-[10rem] flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
                                 value={editValue}
                                 onChange={(e) => setEditValue(e.target.value)}
                                 autoFocus
@@ -1142,7 +1034,7 @@ export default function UploadMatchPage() {
                               </Button>
                             </form>
                           ) : (
-                            <>
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                               <span className="text-sm font-medium text-text">
                                 {g.display_name}
                               </span>
@@ -1154,112 +1046,63 @@ export default function UploadMatchPage() {
                               {g.is_narrator ? (
                                 <Badge tone="violet">narrator</Badge>
                               ) : null}
-                            </>
+                            </div>
                           )}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            variant="secondary"
-                            onClick={() => {
-                              setEditingLabel(g.speaker_label);
-                              setEditValue(g.display_name);
-                            }}
-                          >
-                            <Pencil className="h-3 w-3" />
-                            Rename
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() =>
-                              void handleNarrator(
-                                g.speaker_label,
-                                !g.is_narrator,
-                              )
-                            }
-                          >
-                            {g.is_narrator
-                              ? "Unmark narrator"
-                              : "Mark narrator / off-screen"}
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() => toggleIgnore(g.speaker_label)}
-                          >
-                            <EyeOff className="h-3 w-3" />
-                            Ignore for now
-                          </Button>
+                          <p className="mt-1 text-[11px] text-muted">
+                            {g.segment_count} segments ·{" "}
+                            {g.total_speaking_duration.toFixed(1)}s
+                          </p>
+                          {g.sample_texts.length > 0 ? (
+                            <div className="mt-2 space-y-0.5">
+                              {g.sample_texts.slice(0, 3).map((t, i) => (
+                                <p
+                                  key={i}
+                                  className="line-clamp-2 text-xs italic text-muted"
+                                >
+                                  &ldquo;{t}&rdquo;
+                                </p>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
-                      {(() => {
-                        const others = visibleCastGroups
-                          .filter((x) => x.speaker_label !== g.speaker_label)
-                          .map((x) => x.speaker_label);
-                        const pick =
-                          mergeTargetFor[g.speaker_label] ?? others[0] ?? "";
-                        return others.length > 0 ? (
-                          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-3">
-                            <span className="text-[11px] font-medium text-muted">
-                              Merge duplicate
-                            </span>
-                            <select
-                              className="rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-xs text-text outline-none focus:border-accent/40"
-                              value={pick}
-                              onChange={(e) =>
-                                setMergeTargetFor((m) => ({
-                                  ...m,
-                                  [g.speaker_label]: e.target.value,
-                                }))
-                              }
+
+                      {created ? (
+                        <div className="mt-3 space-y-2">
+                          <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400/95">
+                            <CheckCircle2 className="h-4 w-4 shrink-0" />
+                            Character created
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Link
+                              href={`/voice-studio?character=${encodeURIComponent(created.id)}&panel=voice&focus=attach`}
+                              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground shadow-glow transition hover:opacity-90"
                             >
-                              {others.map((lab) => (
-                                <option key={lab} value={lab}>
-                                  into {lab}
-                                </option>
-                              ))}
-                            </select>
+                              <Volume2 className="h-3.5 w-3.5" />
+                              Attach voice
+                            </Link>
+                            <Link
+                              href={`/voice-studio?character=${encodeURIComponent(created.id)}&panel=voice`}
+                              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-white/[0.08] px-3 text-xs font-semibold text-text ring-1 ring-white/[0.1] transition hover:bg-white/[0.12]"
+                            >
+                              Open Voice Studio
+                            </Link>
                             <Button
-                              type="button"
                               variant="secondary"
-                              className="!px-2.5 !py-1 !text-xs"
-                              disabled={mergeBusy || !pick}
-                              onClick={() => void runMerge(g.speaker_label, pick)}
+                              className="!px-2.5 !py-1.5 !text-xs"
+                              onClick={() => {
+                                setEditingLabel(g.speaker_label);
+                                setEditValue(g.display_name);
+                              }}
                             >
-                              <GitMerge className="h-3 w-3" />
-                              Merge
+                              <Pencil className="h-3 w-3" />
+                              Rename
                             </Button>
                           </div>
-                        ) : null;
-                      })()}
-                      <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted">
-                        <span>{g.segment_count} segments</span>
-                        <span>{g.total_speaking_duration.toFixed(1)}s total</span>
-                      </div>
-                      {g.sample_texts.length > 0 ? (
-                        <div className="mt-3 space-y-1">
-                          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                            Sample lines
-                          </p>
-                          {g.sample_texts.map((t, i) => (
-                            <p
-                              key={i}
-                              className="truncate text-xs italic text-muted"
-                            >
-                              &ldquo;{t}&rdquo;
-                            </p>
-                          ))}
-                        </div>
-                      ) : null}
-
-                      {createdChars[g.speaker_label] ? (
-                        <div className="mt-3 flex items-center gap-2 rounded-lg bg-accent/10 px-3 py-2">
-                          <CheckCircle2 className="h-4 w-4 text-accent" />
-                          <span className="text-xs font-medium text-text">
-                            Saved as &ldquo;{createdChars[g.speaker_label].name}&rdquo;
-                          </span>
                         </div>
                       ) : creatingLabel === g.speaker_label ? (
                         <form
-                          className="mt-3 flex items-center gap-2"
+                          className="mt-3 flex flex-wrap items-center gap-2"
                           onSubmit={(e) => {
                             e.preventDefault();
                             void handleCreateCharacter(
@@ -1269,8 +1112,8 @@ export default function UploadMatchPage() {
                           }}
                         >
                           <input
-                            className="flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                            placeholder="Character name…"
+                            className="min-w-[10rem] flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
+                            placeholder="Character name"
                             value={charNameInput}
                             onChange={(e) => setCharNameInput(e.target.value)}
                             autoFocus
@@ -1290,35 +1133,115 @@ export default function UploadMatchPage() {
                           </Button>
                         </form>
                       ) : (
-                        <Button
-                          variant="secondary"
-                          className="mt-3"
-                          onClick={() => {
-                            setCreatingLabel(g.speaker_label);
-                            setCharNameInput(
-                              g.display_name !== g.speaker_label
-                                ? g.display_name
-                                : "",
-                            );
-                          }}
-                        >
-                          <UserPlus className="h-3.5 w-3.5" />
-                          Create character
-                        </Button>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="secondary"
+                            className="!px-2.5 !py-1.5 !text-xs"
+                            onClick={() => {
+                              setEditingLabel(g.speaker_label);
+                              setEditValue(g.display_name);
+                            }}
+                          >
+                            <Pencil className="h-3 w-3" />
+                            Rename
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            className="!px-2.5 !py-1.5 !text-xs"
+                            onClick={() => {
+                              setCreatingLabel(g.speaker_label);
+                              setCharNameInput(
+                                g.display_name !== g.speaker_label
+                                  ? g.display_name
+                                  : "",
+                              );
+                            }}
+                          >
+                            <UserPlus className="h-3.5 w-3.5" />
+                            Create character
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            className="!px-2.5 !py-1.5 !text-xs"
+                            onClick={() => toggleIgnore(g.speaker_label)}
+                          >
+                            Skip
+                          </Button>
+                        </div>
                       )}
+
+                      {editingLabel !== g.speaker_label ? (
+                        <details className="group mt-2 border-t border-white/[0.06] pt-2">
+                          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-medium text-muted hover:text-text [&::-webkit-details-marker]:hidden">
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                            More
+                          </summary>
+                          <div className="mt-2 flex flex-col gap-2">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              className="w-full justify-start !px-2.5 !py-1.5 !text-xs sm:w-auto"
+                              onClick={() =>
+                                void handleNarrator(
+                                  g.speaker_label,
+                                  !g.is_narrator,
+                                )
+                              }
+                            >
+                              {g.is_narrator
+                                ? "Unmark narrator / off-screen"
+                                : "Mark narrator / off-screen"}
+                            </Button>
+                            {others.length > 0 ? (
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] text-muted">
+                                  Merge duplicate
+                                </span>
+                                <select
+                                  className="rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-xs text-text outline-none focus:border-accent/40"
+                                  value={mergePick}
+                                  onChange={(e) =>
+                                    setMergeTargetFor((m) => ({
+                                      ...m,
+                                      [g.speaker_label]: e.target.value,
+                                    }))
+                                  }
+                                >
+                                  {others.map((lab) => (
+                                    <option key={lab} value={lab}>
+                                      into {lab}
+                                    </option>
+                                  ))}
+                                </select>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  className="!px-2.5 !py-1 !text-xs"
+                                  disabled={mergeBusy || !mergePick}
+                                  onClick={() =>
+                                    void runMerge(g.speaker_label, mergePick)
+                                  }
+                                >
+                                  <GitMerge className="h-3 w-3" />
+                                  Merge
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
+                        </details>
+                      ) : null}
                     </li>
-                  ))}
-                </ul>
+                    );
+                  })}
+                  </ul>
+                </div>
               ) : null}
               {ignoredLabels.size > 0 ? (
-                <div className="mt-4 rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/[0.06]">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                    Hidden for now ({ignoredLabels.size})
-                  </p>
-                  <p className="mt-1 text-xs text-muted">
-                    These voices stay out of your main list. Restore anytime.
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
+                <details className="mt-3 rounded-xl bg-white/[0.02] p-3 ring-1 ring-white/[0.06]">
+                  <summary className="cursor-pointer list-none text-xs font-medium text-muted hover:text-text [&::-webkit-details-marker]:hidden">
+                    Skipped ({ignoredLabels.size})
+                  </summary>
+                  <div className="mt-2 flex flex-wrap gap-2">
                     {[...ignoredLabels].map((lab) => (
                       <button
                         key={lab}
@@ -1330,19 +1253,46 @@ export default function UploadMatchPage() {
                       </button>
                     ))}
                   </div>
-                </div>
+                </details>
               ) : null}
               {transcriptEpisodeId && transcriptSegments.length > 0 ? (
-                <div className="mt-4 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3">
-                  <p className="text-sm font-medium text-foreground">
-                    Transcript ready. Swap performances when your cast has voices.
-                  </p>
-                  <Link
-                    href={`/replace-lines?episode=${encodeURIComponent(transcriptEpisodeId)}`}
-                    className="mt-2 inline-flex text-sm font-semibold text-accent underline-offset-4 hover:underline"
-                  >
-                    Open Replace Lines
-                  </Link>
+                <div
+                  className={`mt-4 rounded-xl px-4 py-3 ${
+                    anyCharacterHasVoice
+                      ? "border border-emerald-500/25 bg-emerald-500/5"
+                      : "border border-white/[0.08] bg-white/[0.02]"
+                  }`}
+                >
+                  {anyCharacterHasVoice ? (
+                    <>
+                      <p className="text-sm font-medium text-foreground">
+                        Voices are on the roster. You can swap lines in Replace
+                        Lines when you&apos;re ready.
+                      </p>
+                      <Link
+                        href={`/replace-lines?episode=${encodeURIComponent(transcriptEpisodeId)}`}
+                        className="mt-2 inline-flex text-sm font-semibold text-accent underline-offset-4 hover:underline"
+                      >
+                        Open Replace Lines
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          Replace Lines
+                        </span>{" "}
+                        works best after at least one character has a voice in
+                        Voice Studio. Finish cast setup above first.
+                      </p>
+                      <Link
+                        href={`/replace-lines?episode=${encodeURIComponent(transcriptEpisodeId)}`}
+                        className="mt-2 inline-flex text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                      >
+                        Open Replace Lines anyway
+                      </Link>
+                    </>
+                  )}
                 </div>
               ) : null}
             </div>

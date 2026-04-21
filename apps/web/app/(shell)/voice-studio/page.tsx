@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Download,
@@ -208,6 +208,17 @@ function VoiceStudioContent() {
   }, [activeProjectId, debouncedSearch]);
 
   const selected = characters.find((c) => c.id === selectedId) ?? null;
+
+  const focusAttach =
+    (searchParams.get("focus") || "").trim().toLowerCase() === "attach";
+
+  const pageSubtitle = useMemo(() => {
+    const ch = characters.find((c) => c.id === selectedId);
+    if (focusAttach && ch && !ch.default_voice_id) {
+      return `You're attaching a voice to ${ch.name}. Use Voice setup below—pick a catalog voice or design one. That unlocks clips and Replace Lines.`;
+    }
+    return "Project characters get voices here. After a voice is attached, generate clips—then use Replace Lines to swap dialogue.";
+  }, [focusAttach, selectedId, characters]);
 
   useEffect(() => {
     setDesignDesc("");
@@ -623,12 +634,25 @@ function VoiceStudioContent() {
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="Voice Studio"
-        subtitle="Your cast is on the roster. Assign or design a voice per character, then generate clips you can reuse."
-      />
+      <PageHeader title="Voice Studio" subtitle={pageSubtitle} />
 
       {error ? <ErrorBanner title="Voice studio" detail={error} /> : null}
+
+      {focusAttach &&
+      selected &&
+      !selected.default_voice_id &&
+      !loading &&
+      characters.length > 0 ? (
+        <Panel className="border border-accent/35 bg-accent/5">
+          <p className="text-sm font-semibold text-text">
+            Next step: assign or design a voice for {selected.name}
+          </p>
+          <p className="mt-1 text-xs text-muted">
+            This character is selected. Scroll to Voice setup, choose a voice,
+            and save—then you can generate clips or head to Replace Lines.
+          </p>
+        </Panel>
+      ) : null}
 
       {loading ? (
         <div className="grid gap-5 lg:grid-cols-2">
