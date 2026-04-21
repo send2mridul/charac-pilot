@@ -11,3 +11,5 @@ __pycache__
 .python-version
 apps/api/storage/
 _uvicorn_test_*.txt
+ref-character-showcase/
+openapi-live*.json

@@ -25,62 +25,68 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="relative flex h-full w-64 shrink-0 flex-col border-r border-border bg-panel">
-      <div className="flex h-14 items-center gap-2.5 border-b border-border px-5">
-        <div className="flex size-7 items-center justify-center rounded-md bg-text text-canvas">
-          <Sparkles className="h-3.5 w-3.5" aria-hidden />
+    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-[var(--sidebar-border)] bg-[var(--sidebar)] text-[var(--sidebar-foreground)]">
+      <Link
+        href="/projects"
+        className="flex items-center gap-3 px-5 pb-5 pt-6"
+      >
+        <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-surface shadow-glow ring-1 ring-[var(--sidebar-border)]">
+          <Sparkles className="h-5 w-5 text-[var(--primary)]" aria-hidden />
         </div>
-        <div className="leading-tight">
-          <p className="text-[13.5px] font-semibold tracking-tight text-text">
+        <div>
+          <div className="font-display text-lg font-semibold leading-none tracking-tight text-[var(--sidebar-accent-foreground)]">
             {APP_BRAND}
-          </p>
-          <p className="text-[11px] text-muted">Cast your voices</p>
+          </div>
+          <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-[var(--sidebar-muted)]">
+            Voice · Studio
+          </div>
         </div>
-      </div>
+      </Link>
 
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
-        <p className="px-2 pb-2 text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted/70">
-          Workflow
-        </p>
-        <ul className="space-y-0.5">
+      <div className="mx-5 h-px bg-[var(--sidebar-border)]" />
+
+      <nav className="flex-1 overflow-y-auto px-3 pb-4">
+        <SectionLabel>Workflow</SectionLabel>
+        <ul className="space-y-1">
           {workflowNav.map((item) => {
             const active =
               pathname === item.href ||
               (item.href === "/projects"
                 ? pathname.startsWith("/projects")
-                : pathname === item.href || pathname.startsWith(`${item.href}/`));
+                : pathname === item.href ||
+                  pathname.startsWith(`${item.href}/`));
             const Icon = item.icon;
             return (
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className={`group relative flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-[13px] font-medium transition ${
+                  className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
                     active
-                      ? "border-border bg-panel-elevated text-text shadow-[0_1px_2px_rgba(17,24,39,0.08)]"
-                      : "border-transparent text-muted hover:border-border hover:bg-panel-elevated hover:text-text"
+                      ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-accent-foreground)] shadow-soft"
+                      : "text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar-accent)]/60 hover:text-[var(--sidebar-accent-foreground)]"
                   }`}
                 >
                   <span
-                    className={`flex h-7 w-7 items-center justify-center rounded-md ${
+                    className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
                       active
-                        ? "bg-accent-dim text-accent"
-                        : "bg-panel-elevated text-muted group-hover:text-text"
+                        ? "bg-primary/15 text-primary"
+                        : "bg-[var(--sidebar-accent)]/40 text-[var(--sidebar-muted)] group-hover:text-[var(--sidebar-accent-foreground)]"
                     }`}
                   >
-                    <Icon className="h-4 w-4" aria-hidden />
+                    <Icon className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
                   </span>
-                  <span className="flex-1 font-medium">{item.label}</span>
-                  {active ? <ChevronRight className="h-4 w-4 text-accent/80" /> : null}
+                  <span className="flex-1 text-left tracking-tight">{item.label}</span>
+                  {active ? (
+                    <ChevronRight className="h-4 w-4 text-[var(--sidebar-muted)]" />
+                  ) : null}
                 </Link>
               </li>
             );
           })}
         </ul>
 
-        <p className="mt-6 px-2 pb-2 text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted/70">
-          Helpers
-        </p>
-        <ul className="space-y-0.5">
+        <SectionLabel>Helpers</SectionLabel>
+        <ul className="space-y-1">
           {secondaryNav.map((item) => {
             const active =
               pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -89,13 +95,15 @@ export function Sidebar() {
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className={`group flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-[12.5px] transition ${
+                  className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
                     active
-                      ? "border-border bg-panel-elevated text-text"
-                      : "border-transparent text-muted hover:border-border hover:bg-panel-elevated hover:text-text"
+                      ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-accent-foreground)]"
+                      : "text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar-accent)]/60 hover:text-[var(--sidebar-accent-foreground)]"
                   }`}
                 >
-                  <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--sidebar-accent)]/40 text-[var(--sidebar-muted)]">
+                    <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  </span>
                   <span className="flex-1 leading-snug">{item.label}</span>
                 </Link>
               </li>
@@ -103,19 +111,19 @@ export function Sidebar() {
           })}
         </ul>
 
-        <p className="mt-5 px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted/60">
-          Coming soon
-        </p>
-        <ul className="space-y-0.5 opacity-80">
+        <SectionLabel>Coming Soon</SectionLabel>
+        <ul className="space-y-1">
           {comingSoonNav.map((item) => {
             const Icon = item.icon;
             return (
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className="group flex items-center gap-2.5 rounded-lg border border-transparent px-2.5 py-1.5 text-[12px] text-muted/80 transition hover:border-border hover:bg-panel-elevated hover:text-muted"
+                  className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[var(--sidebar-muted)] transition hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--sidebar-accent-foreground)]"
                 >
-                  <Icon className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--sidebar-accent)]/40 text-[var(--sidebar-muted)]">
+                    <Icon className="h-3 w-3 shrink-0" aria-hidden />
+                  </span>
                   <span className="flex-1 leading-snug">{item.label}</span>
                 </Link>
               </li>
@@ -123,20 +131,18 @@ export function Sidebar() {
           })}
         </ul>
 
-        <p className="mt-6 px-2 pb-2 text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted/70">
-          Projects
-        </p>
+        <SectionLabel>Projects</SectionLabel>
         {loading ? (
-          <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted">
+          <div className="flex items-center gap-2 px-3 py-4 text-xs text-[var(--sidebar-muted)]">
             <Spinner className="h-4 w-4" />
             Loading…
           </div>
         ) : projects.length === 0 ? (
-          <p className="px-3 py-2 text-xs text-muted">
+          <p className="px-3 py-2 text-xs text-[var(--sidebar-muted)]">
             No projects yet. Create one from the Projects page.
           </p>
         ) : (
-          <ul className="space-y-0.5">
+          <ul className="space-y-1">
             {projects.slice(0, 6).map((p) => {
               const href = `/projects/${p.id}`;
               const active = pathname === href;
@@ -146,17 +152,17 @@ export function Sidebar() {
                   <Link
                     href={href}
                     onClick={() => setActiveProjectId(p.id)}
-                    className={`flex items-center gap-3 rounded-lg border px-2.5 py-2 text-sm transition ${
+                    className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
                       active
-                        ? "border-border bg-panel-elevated text-text"
-                        : "border-transparent text-muted hover:border-border hover:bg-panel-elevated hover:text-text"
+                        ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-accent-foreground)]"
+                        : "text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar-accent)]/60 hover:text-[var(--sidebar-accent-foreground)]"
                     }`}
                   >
                     <span
-                      className={`flex h-8 w-8 items-center justify-center rounded-md ${
+                      className={`flex h-8 w-8 items-center justify-center rounded-lg ${
                         isContext
-                          ? "bg-violet-dim text-violet"
-                          : "bg-panel-elevated text-muted"
+                          ? "bg-primary/20 text-primary"
+                          : "bg-[var(--sidebar-accent)]/40 text-[var(--sidebar-muted)]"
                       }`}
                     >
                       <FolderKanban className="h-4 w-4" aria-hidden />
@@ -171,8 +177,20 @@ export function Sidebar() {
         )}
       </nav>
 
-      <div className="border-t border-border p-4">
-        <PanelMini />
+      <div className="m-4 rounded-2xl border border-[var(--sidebar-border)] bg-[var(--sidebar-accent)]/40 p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary">
+            <span className="text-xs font-bold">L</span>
+          </div>
+          <div>
+            <div className="text-[13px] font-semibold text-[var(--sidebar-accent-foreground)]">
+              Local workspace
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-[var(--sidebar-muted)]">
+              Projects and media stay on this machine. Keep the API running for full workflow.
+            </p>
+          </div>
+        </div>
       </div>
     </aside>
   );
@@ -180,20 +198,16 @@ export function Sidebar() {
 
 function BadgePill({ children }: { children: string }) {
   return (
-    <span className="rounded-full bg-panel-elevated px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted ring-1 ring-border">
+    <span className="rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary ring-1 ring-primary/30">
       {children}
     </span>
   );
 }
 
-function PanelMini() {
+function SectionLabel({ children }: { children: string }) {
   return (
-    <div className="rounded-xl border border-border bg-panel-elevated p-3">
-      <p className="text-xs font-medium text-text">Local workspace</p>
-      <p className="mt-1 text-[11px] leading-relaxed text-muted">
-        Projects and media stay on this machine. Keep the API running to use
-        the full workflow.
-      </p>
-    </div>
+    <p className="px-3 pb-2 pt-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--sidebar-muted)]">
+      {children}
+    </p>
   );
 }

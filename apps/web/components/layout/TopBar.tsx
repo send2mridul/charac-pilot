@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { ChevronRight } from "lucide-react";
 import { APP_BRAND, navTitleForPath } from "@/lib/nav";
 import { useHydrated } from "@/lib/useHydrated";
 import { useProjects } from "@/components/providers/ProjectProvider";
@@ -23,28 +24,25 @@ export function TopBar() {
       : null;
 
   const title = project?.name ?? navTitleForPath(pathname);
-  const subtitle = project
-    ? "Characters, voices, and episodes for this production."
-    : "Create a project, add characters, attach voices, replace lines.";
 
   return (
-    <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border bg-canvas/85 px-8 py-3 backdrop-blur-xl lg:px-12">
-      <div>
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-muted">
-          {APP_BRAND}
-        </p>
-        <p className="text-sm font-medium text-text">{title}</p>
-        <p className="text-[12px] text-muted">{subtitle}</p>
-      </div>
+    <header className="sticky top-0 z-10 border-b border-border bg-background/80 px-8 py-4 backdrop-blur-md lg:px-12">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
+        <nav className="flex items-center gap-2 text-xs">
+          <span className="font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            {APP_BRAND}
+          </span>
+          <ChevronRight className="h-3 w-3 text-muted-foreground/60" />
+          <span className="font-semibold text-foreground">{title}</span>
+        </nav>
 
-      <div className="flex flex-1 items-center justify-end">
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-panel px-2 py-1 shadow-[0_1px_2px_rgba(17,24,39,0.08)]">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-gradient-to-br from-text to-text/80 text-[10px] font-bold text-canvas">
+        <div className="flex items-center gap-3 rounded-full border border-border bg-surface px-3 py-1.5 shadow-soft">
+          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-ink text-[10px] font-bold text-ink-foreground">
             CV
           </div>
-          <div className="hidden text-left sm:block">
-            <p className="text-xs font-medium text-text">You</p>
-            <p className="text-[10px] text-muted">Workspace</p>
+          <div className="hidden text-left leading-tight sm:block">
+            <p className="text-xs font-semibold text-foreground">You</p>
+            <p className="text-[10px] text-muted-foreground">Workspace</p>
           </div>
         </div>
       </div>

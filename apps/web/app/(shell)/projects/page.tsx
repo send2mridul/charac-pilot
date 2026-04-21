@@ -3,23 +3,36 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { FolderPlus, Plus, X } from "lucide-react";
+import {
+  ArrowUpRight,
+  Film,
+  FolderKanban,
+  Mic,
+  MoreHorizontal,
+  Plus,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { useProjects } from "@/components/providers/ProjectProvider";
-import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Panel } from "@/components/ui/Panel";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
 
-function statusTone(s: string) {
-  if (s === "active") return "success" as const;
-  if (s === "archived") return "default" as const;
-  return "accent" as const;
+const accentBar = {
+  teal: "from-[oklch(0.62_0.13_185)] to-[oklch(0.5_0.12_200)]",
+  amber: "from-[oklch(0.78_0.14_70)] to-[oklch(0.65_0.15_45)]",
+  violet: "from-[oklch(0.6_0.15_290)] to-[oklch(0.45_0.13_270)]",
+} as const;
+
+type Accent = keyof typeof accentBar;
+
+function accentForIndex(i: number): Accent {
+  const keys: Accent[] = ["teal", "amber", "violet"];
+  return keys[i % keys.length]!;
 }
 
 function formatUpdated(iso: string) {
@@ -36,20 +49,35 @@ function formatUpdated(iso: string) {
 
 type ProjStats = { total: number; voiced: number };
 
-function setupHint(s: ProjStats | undefined): {
-  line: string;
-  tone: "default" | "accent" | "success";
-} {
+function setupHint(s: ProjStats | undefined): string {
   if (!s || s.total === 0) {
-    return { line: "Add or import characters", tone: "accent" };
+    return "Add or import characters";
   }
   if (s.voiced === 0) {
-    return { line: `${s.total} character(s), attach voices`, tone: "accent" };
+    return `${s.total} character(s), attach voices`;
   }
   if (s.voiced < s.total) {
-    return { line: `Voices ${s.voiced}/${s.total}`, tone: "accent" };
+    return `Voices ${s.voiced}/${s.total}`;
   }
-  return { line: "Voices ready, open Replace Lines", tone: "success" };
+  return "Voices ready · open Replace Lines";
+}
+
+function StatusPill({ status }: { status: string }) {
+  const st = status.toLowerCase();
+  const map =
+    st === "active"
+      ? "bg-primary/12 text-primary ring-primary/25"
+      : st === "archived"
+        ? "bg-muted text-muted-foreground ring-border"
+        : "bg-surface-sunken text-muted-foreground ring-border-strong";
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ring-1 ring-inset ${map}`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {status}
+    </span>
+  );
 }
 
 export default function ProjectsPage() {
@@ -116,60 +144,71 @@ export default function ProjectsPage() {
     }
   }
 
+  const activeCount = projects.filter((p) => p.status === "active").length;
+
   return (
     <div className="space-y-10">
-      <PageHeader
-        title="Projects"
-        subtitle="Start here: create a project, add characters, attach voices, then replace lines when you are ready."
-        actions={
-          <Button type="button" onClick={() => setModalOpen(true)}>
-            <Plus className="h-4 w-4" />
-            New project
-          </Button>
-        }
-      />
+      <div className="flex flex-wrap items-end justify-between gap-6 pb-2">
+        <div className="max-w-xl">
+          <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+            {projects.length} project · {activeCount} active
+          </span>
+          <h1 className="mt-4 font-display text-5xl font-semibold leading-[1.05] tracking-tight text-balance text-foreground md:text-6xl">
+            Projects
+          </h1>
+          <p className="mt-3 max-w-md text-[15px] leading-relaxed text-muted-foreground">
+            Start here: create a project, add characters, attach voices, then replace lines when you are ready.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setModalOpen(true)}
+          className="inline-flex h-12 items-center gap-2 rounded-xl bg-ink px-5 text-sm font-semibold text-ink-foreground shadow-lifted transition hover:bg-foreground"
+        >
+          <Plus className="h-4 w-4" strokeWidth={2.5} />
+          New project
+        </button>
+      </div>
 
       {modalOpen ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
           aria-labelledby="new-project-title"
         >
-          <div className="relative w-full max-w-md rounded-2xl border border-white/[0.1] bg-panel p-6 shadow-2xl ring-1 ring-white/10">
+          <div className="relative w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-lifted">
             <button
               type="button"
-              className="absolute right-4 top-4 rounded-lg p-1 text-muted transition hover:bg-white/[0.06] hover:text-text"
+              className="absolute right-4 top-4 rounded-lg p-1 text-muted-foreground hover:bg-surface-sunken hover:text-foreground"
               onClick={() => setModalOpen(false)}
               aria-label="Close"
             >
               <X className="h-4 w-4" />
             </button>
-            <h2 id="new-project-title" className="text-lg font-semibold text-text">
+            <h2 id="new-project-title" className="font-display text-lg font-semibold text-foreground">
               New project
             </h2>
-            <p className="mt-1 text-sm text-muted">
+            <p className="mt-1 text-sm text-muted-foreground">
               Name your production. Description is optional.
             </p>
             <div className="mt-4 space-y-3">
               <div>
-                <label className="text-[11px] font-medium text-muted">
-                  Project name
-                </label>
+                <label className="text-[11px] font-medium text-muted-foreground">Project name</label>
                 <input
                   autoFocus
-                  className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
+                  className="mt-1 w-full rounded-lg border border-border bg-surface-sunken/50 px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="e.g. Neon Alley, Season 2"
                 />
               </div>
               <div>
-                <label className="text-[11px] font-medium text-muted">
-                  Description (optional)
-                </label>
+                <label className="text-[11px] font-medium text-muted-foreground">Description (optional)</label>
                 <textarea
-                  className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
+                  className="mt-1 w-full rounded-lg border border-border bg-surface-sunken/50 px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   rows={3}
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
@@ -178,14 +217,10 @@ export default function ProjectsPage() {
               </div>
             </div>
             {createError ? (
-              <p className="mt-3 text-xs text-red-400">{createError}</p>
+              <p className="mt-3 text-xs text-red-600">{createError}</p>
             ) : null}
             <div className="mt-6 flex justify-end gap-2">
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() => setModalOpen(false)}
-              >
+              <Button variant="secondary" type="button" onClick={() => setModalOpen(false)}>
                 Cancel
               </Button>
               <Button
@@ -194,7 +229,7 @@ export default function ProjectsPage() {
                 onClick={() => void onCreate()}
               >
                 {creating ? (
-                  <Spinner className="h-4 w-4 border-t-canvas" />
+                  <Spinner className="h-4 w-4 border-t-primary-foreground" />
                 ) : null}
                 Create and open
               </Button>
@@ -212,17 +247,16 @@ export default function ProjectsPage() {
       ) : null}
 
       {loading ? (
-        <Panel>
+        <div className="rounded-2xl border border-border bg-surface p-6 shadow-soft">
           <div className="space-y-3">
             <Skeleton className="h-8 w-1/3" />
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
           </div>
-        </Panel>
+        </div>
       ) : projects.length === 0 ? (
         <EmptyState
-          icon={FolderPlus}
+          icon={FolderKanban}
           title="No projects yet"
           description="Create a project, then add characters, attach voices, and replace lines."
           action={
@@ -232,53 +266,139 @@ export default function ProjectsPage() {
           }
         />
       ) : (
-        <Panel padded={false}>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-white/[0.06] text-xs uppercase tracking-wider text-muted">
-                  <th className="px-5 py-3 font-medium">Name</th>
-                  <th className="px-5 py-3 font-medium">Status</th>
-                  <th className="px-5 py-3 font-medium">Setup</th>
-                  <th className="px-5 py-3 font-medium">Scenes</th>
-                  <th className="px-5 py-3 font-medium text-right">Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {projects.map((p) => {
-                  const hint = setupHint(statsByProject[p.id]);
-                  return (
-                    <tr
-                      key={p.id}
-                      className="border-b border-white/[0.04] transition last:border-0 hover:bg-white/[0.02]"
-                    >
-                      <td className="px-5 py-4">
-                        <Link
-                          href={`/projects/${p.id}`}
-                          onClick={() => setActiveProjectId(p.id)}
-                          className="font-medium text-text underline-offset-4 transition hover:text-accent hover:underline"
-                        >
-                          {p.name}
-                        </Link>
-                      </td>
-                      <td className="px-5 py-4">
-                        <Badge tone={statusTone(p.status)}>{p.status}</Badge>
-                      </td>
-                      <td className="px-5 py-4">
-                        <Badge tone={hint.tone}>{hint.line}</Badge>
-                      </td>
-                      <td className="px-5 py-4 text-muted">{p.scene_count}</td>
-                      <td className="px-5 py-4 text-right text-muted">
-                        {formatUpdated(p.updated_at)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        <>
+          <div className="grid grid-cols-1 gap-3 pb-6 md:grid-cols-3">
+            {[
+              { icon: Sparkles, title: "Start blank", hint: "Empty project, add what you need", href: "/projects" },
+              { icon: Film, title: "Import from video", hint: "Detect speakers automatically", href: "/upload-match" },
+              { icon: Mic, title: "Clone a voice", hint: "Bring a sample into Voice Studio", href: "/voice-studio" },
+            ].map((q) => (
+              <Link
+                key={q.title}
+                href={q.href}
+                className="group flex items-center gap-4 rounded-2xl border border-border bg-surface p-4 text-left transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-md"
+              >
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <q.icon className="h-4 w-4" strokeWidth={2.25} />
+                </span>
+                <div className="flex-1">
+                  <div className="text-sm font-semibold text-foreground">{q.title}</div>
+                  <div className="text-xs text-muted-foreground">{q.hint}</div>
+                </div>
+                <ArrowUpRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+              </Link>
+            ))}
           </div>
-        </Panel>
+
+          <div className="flex items-end justify-between pb-5">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                All projects
+              </div>
+              <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight text-foreground">
+                Your workspace
+              </h2>
+            </div>
+            <div className="hidden text-xs text-muted-foreground md:block">
+              Sorted by <span className="font-mono font-semibold text-foreground">last updated</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+            {projects.map((p, i) => {
+              const accent = accentForIndex(i);
+              const hint = setupHint(statsByProject[p.id]);
+              return (
+                <article
+                  key={p.id}
+                  className="group relative overflow-hidden rounded-2xl border border-border bg-card shadow-soft transition-all hover:-translate-y-1 hover:border-border-strong hover:shadow-lifted"
+                >
+                  <div className={`h-2 w-full bg-gradient-to-r ${accentBar[accent]}`} />
+                  <div className="p-6">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-soft ${accentBar[accent]}`}
+                        >
+                          <Film className="h-4 w-4" strokeWidth={2.5} />
+                        </div>
+                        <div>
+                          <h3 className="font-display text-lg font-semibold leading-tight tracking-tight text-foreground">
+                            {p.name}
+                          </h3>
+                          <div className="mt-0.5 text-[11px] text-muted-foreground">
+                            Updated {formatUpdated(p.updated_at)}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-surface-sunken hover:text-foreground"
+                        aria-label="Project actions"
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    <div className="mt-5 flex flex-wrap items-center gap-2">
+                      <StatusPill status={p.status} />
+                      <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-medium text-primary">
+                        {hint}
+                      </span>
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-2 gap-3 border-t border-border pt-5">
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Characters
+                        </div>
+                        <div className="mt-1 font-mono text-xl font-semibold text-foreground">
+                          {statsByProject[p.id]?.total ?? "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Scenes
+                        </div>
+                        <div className="mt-1 font-mono text-xl font-semibold text-foreground">
+                          {p.scene_count}
+                        </div>
+                      </div>
+                    </div>
+
+                    <Link
+                      href={`/projects/${p.id}`}
+                      onClick={() => setActiveProjectId(p.id)}
+                      className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground transition-colors hover:border-foreground hover:bg-foreground hover:text-background"
+                    >
+                      Open project
+                      <ArrowUpRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </div>
+                </article>
+              );
+            })}
+
+            <button
+              type="button"
+              onClick={() => setModalOpen(true)}
+              className="group flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border bg-surface-sunken/40 p-6 text-center transition-all hover:border-primary/40 hover:bg-primary/5"
+            >
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-transform group-hover:scale-110">
+                <Plus className="h-5 w-5" strokeWidth={2.5} />
+              </span>
+              <div>
+                <div className="font-display text-base font-semibold text-foreground">New project</div>
+                <div className="mt-1 text-xs text-muted-foreground">Start a fresh canvas</div>
+              </div>
+            </button>
+          </div>
+        </>
       )}
+
+      <footer className="mt-16 border-t border-border pt-6 text-center text-[11px] text-muted-foreground">
+        CastVoice · A studio for crafting voices.
+      </footer>
     </div>
   );
 }
