@@ -32,6 +32,7 @@ import { buttonClass } from "@/components/ui/buttonStyles";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Spinner } from "@/components/ui/Spinner";
 
 function avatarSrc(c: CharacterDto): string | null {
@@ -93,6 +94,8 @@ export default function CharactersPage() {
   const [voicePreviewPlayingId, setVoicePreviewPlayingId] = useState<
     string | null
   >(null);
+  const [confirmRemoveChar, setConfirmRemoveChar] = useState<CharacterDto | null>(null);
+  const [confirmDetachVoice, setConfirmDetachVoice] = useState<CharacterDto | null>(null);
   const [episodes, setEpisodes] = useState<EpisodeDto[]>([]);
 
   useEffect(() => {
@@ -185,14 +188,14 @@ export default function CharactersPage() {
     setEditErr(null);
   }
 
-  async function removeCharacter(c: CharacterDto) {
-    if (
-      !globalThis.confirm(
-        `Remove “${c.name}” from this project? Saved clips for this character will be deleted.`,
-      )
-    ) {
-      return;
-    }
+  function removeCharacter(c: CharacterDto) {
+    setConfirmRemoveChar(c);
+  }
+
+  async function executeRemoveCharacter() {
+    const c = confirmRemoveChar;
+    if (!c) return;
+    setConfirmRemoveChar(null);
     try {
       await api.deleteCharacter(c.id);
       setCharacters((prev) => prev.filter((x) => x.id !== c.id));
@@ -206,14 +209,14 @@ export default function CharactersPage() {
     }
   }
 
-  async function detachVoice(c: CharacterDto) {
-    if (
-      !globalThis.confirm(
-        `Remove the attached voice from “${c.name}”? You can pick another in Voice Studio.`,
-      )
-    ) {
-      return;
-    }
+  function detachVoice(c: CharacterDto) {
+    setConfirmDetachVoice(c);
+  }
+
+  async function executeDetachVoice() {
+    const c = confirmDetachVoice;
+    if (!c) return;
+    setConfirmDetachVoice(null);
     try {
       const updated = await api.clearCharacterVoice(c.id);
       setCharacters((prev) =>
@@ -228,6 +231,7 @@ export default function CharactersPage() {
       );
     }
   }
+
 
   async function saveEdit() {
     if (!editId || !editName.trim()) return;
@@ -408,7 +412,7 @@ export default function CharactersPage() {
                   </label>
                   <input
                     className="h-11 w-full rounded-xl border border-border bg-surface-sunken/50 px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:bg-surface focus:ring-2 focus:ring-primary/20"
-                    placeholder="Lead, narrator, guest…"
+                    placeholder="Lead, narrator, guestâ€¦"
                     value={newRole}
                     onChange={(e) => setNewRole(e.target.value)}
                   />
@@ -574,7 +578,7 @@ export default function CharactersPage() {
               </h2>
             </div>
             <div className="text-xs text-muted-foreground">
-              <span className="font-mono font-semibold text-foreground">{characters.length}</span> total ·{" "}
+              <span className="font-mono font-semibold text-foreground">{characters.length}</span> total Â·{" "}
               <span className="font-mono font-semibold text-foreground">{voicedCount}</span> voices designed
             </div>
           </div>
@@ -642,7 +646,7 @@ export default function CharactersPage() {
                         <span className="inline-flex items-center gap-1">
                           <span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
                           {c.source_episode_id
-                            ? `From Import · ${episodeTitleById[c.source_episode_id] ?? "episode"}`
+                            ? `From Import Â· ${episodeTitleById[c.source_episode_id] ?? "episode"}`
                             : "Added manually"}
                         </span>
                         {c.source_speaker_labels.length > 0 ? (
@@ -830,8 +834,35 @@ export default function CharactersPage() {
         </>
       )}
 
+      <ConfirmModal
+        open={!!confirmRemoveChar}
+        title="Remove character"
+        confirmLabel="Remove"
+        danger
+        onConfirm={() => void executeRemoveCharacter()}
+        onCancel={() => setConfirmRemoveChar(null)}
+      >
+        <p>
+          Remove &ldquo;{confirmRemoveChar?.name}&rdquo; from this project?
+          Saved clips for this character will be deleted.
+        </p>
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={!!confirmDetachVoice}
+        title="Remove voice"
+        confirmLabel="Remove voice"
+        onConfirm={() => void executeDetachVoice()}
+        onCancel={() => setConfirmDetachVoice(null)}
+      >
+        <p>
+          Remove the attached voice from &ldquo;{confirmDetachVoice?.name}&rdquo;?
+          You can pick another in Voice Studio.
+        </p>
+      </ConfirmModal>
+
       <footer className="mt-16 border-t border-border pt-6 text-center text-[11px] text-muted-foreground">
-        CastWeave · Video to cast, voice, and lines.
+        CastWeave Â· Video to cast, voice, and lines.
       </footer>
     </div>
   );

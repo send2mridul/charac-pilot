@@ -11,12 +11,16 @@ import {
 import Link from "next/link";
 import {
   CheckCircle2,
+  ChevronDown,
+  Download,
   FileText,
   FileVideo,
   GitMerge,
   Mic2,
   MoreHorizontal,
+  Pause,
   Pencil,
+  Play,
   UploadCloud,
   UserPlus,
   Users,
@@ -28,6 +32,7 @@ import { mediaUrl } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
 import type {
   CharacterDto,
+  EpisodeDto,
   EpisodeMediaJobResult,
   JobDto,
   ReplacementDto,
@@ -40,6 +45,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Panel } from "@/components/ui/Panel";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { SourceVoiceModal } from "@/components/ui/SourceVoiceModal";
 import { Spinner } from "@/components/ui/Spinner";
 
 /** Polling interval while job.status is queued or running. */
@@ -85,6 +92,14 @@ function mediaResultFromJob(job: JobDto | null): EpisodeMediaJobResult | null {
         : r.fallback_reason === null
           ? null
           : undefined,
+    transcript_coverage_low:
+      typeof r.transcript_coverage_low === "boolean"
+        ? r.transcript_coverage_low
+        : undefined,
+    transcript_coverage_ratio:
+      typeof r.transcript_coverage_ratio === "number"
+        ? r.transcript_coverage_ratio
+        : undefined,
   };
 }
 
@@ -114,6 +129,15 @@ function formatTimecode(seconds: number): string {
   const r = s % 60;
   const sec = r < 10 ? `0${r.toFixed(2)}` : r.toFixed(2);
   return `${m}:${sec}`;
+}
+
+/** English UI label for detected spoken language (never non-Latin script). */
+function spokenLanguageUiLabel(code: string | null | undefined): string {
+  if (code == null || String(code).trim() === "") return "";
+  const b = String(code).trim().toLowerCase().split("-")[0] ?? "";
+  if (b === "hi") return "Hindi";
+  if (b === "en") return "English";
+  return String(code).trim();
 }
 
 function speakerRowDomId(label: string): string {
@@ -237,9 +261,19 @@ export default function UploadMatchPage() {
   >({});
   const [editSegmentId, setEditSegmentId] = useState<string | null>(null);
   const [editSegmentDraft, setEditSegmentDraft] = useState("");
+  const editRowRef = useRef<HTMLLIElement>(null);
   const [generatingSegmentId, setGeneratingSegmentId] = useState<string | null>(
     null,
   );
+  const [batchLineBusy, setBatchLineBusy] = useState(false);
+  const [sourceVoiceModalChar, setSourceVoiceModalChar] =
+    useState<CharacterDto | null>(null);
+  const [sourceVoiceBusy, setSourceVoiceBusy] = useState(false);
+  const [confirmDeleteSegId, setConfirmDeleteSegId] = useState<string | null>(null);
+  const [playingSourceSegId, setPlayingSourceSegId] = useState<string | null>(null);
+  const sourceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [projectClipCount, setProjectClipCount] = useState(0);
+  const [projectEpisodes, setProjectEpisodes] = useState<EpisodeDto[]>([]);
   const uploadSessionRef = useRef(0);
   const progressTrustRef = useRef({
     lastP: -1,
@@ -247,9 +281,12 @@ export default function UploadMatchPage() {
     lastMsg: "",
     lastUpd: "",
   });
+  const [actionBusy, setActionBusy] = useState(false);
   const [importBootKind, setImportBootKind] = useState<
     "none" | "restored" | "fresh"
   >("none");
+  const [coverageBannerDismissedFor, setCoverageBannerDismissedFor] = useState<string | null>(null);
+  const [avatarBusyIndex, setAvatarBusyIndex] = useState<number | null>(null);
   const [processingTrust, setProcessingTrust] = useState({
     determinate: true,
     longWait: false,
@@ -290,9 +327,28 @@ export default function UploadMatchPage() {
           return;
         }
         if (st === "done") {
+          const newMedia = mediaResultFromJob(j);
+          if (newMedia) setPersistedMedia(newMedia);
           setPhase("done");
           setImportBootKind("none");
-          toast("Import saved to this project");
+          setFile(null);
+          setTranscriptSegments([]);
+          setTranscriptFetchDone(false);
+          setTranscriptError(null);
+          setSpeakerGroups([]);
+          setSpeakerGroupsError(null);
+          setCreatedChars({});
+          setEditSegmentId(null);
+          toast("New import ready. Workspace updated.");
+          if (activeProjectId) {
+            void api.listEpisodes(activeProjectId).then((rows) => {
+              setProjectEpisodes(
+                rows
+                  .filter((e) => e.segment_count > 0)
+                  .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
+              );
+            }).catch(() => {});
+          }
           return;
         }
         setPhase("failed");
@@ -307,13 +363,16 @@ export default function UploadMatchPage() {
         );
       }
     },
-    [toast],
+    [toast, activeProjectId],
   );
 
   async function startUpload() {
-    if (!activeProjectId || !file) return;
+    if (!activeProjectId || !file || busy) return;
     uploadSessionRef.current += 1;
     const sessionId = uploadSessionRef.current;
+    if (storageKey) {
+      try { window.localStorage.removeItem(storageKey); } catch { /* ignore */ }
+    }
     setImportBootKind("fresh");
     setBusy(true);
     setError(null);
@@ -414,6 +473,7 @@ export default function UploadMatchPage() {
 
   useEffect(() => {
     if (!storageKey || !activeProjectId) return;
+    if (importBootKind === "fresh") return;
     let cancelled = false;
     try {
       const raw =
@@ -439,7 +499,6 @@ export default function UploadMatchPage() {
       /* ignore invalid local data */
     }
 
-    /* Do not resume from API while an upload or worker job is in flight (busy is false during poll). */
     if (phase !== "idle" && phase !== "failed") return;
     if (busy) return;
 
@@ -476,7 +535,7 @@ export default function UploadMatchPage() {
     return () => {
       cancelled = true;
     };
-  }, [storageKey, legacyStorageKey, activeProjectId, phase, busy, toast]);
+  }, [storageKey, legacyStorageKey, activeProjectId, phase, busy, toast, importBootKind]);
 
   useEffect(() => {
     if (phase !== "processing") return;
@@ -608,6 +667,15 @@ export default function UploadMatchPage() {
   }, [transcriptEpisodeId, phase, transcriptFetchDone]);
 
   useEffect(() => {
+    if (!activeProjectId) { setProjectEpisodes([]); return; }
+    let c = false;
+    void api.listEpisodes(activeProjectId).then((rows) => {
+      if (!c) setProjectEpisodes(rows.filter((e) => e.segment_count > 0).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()));
+    }).catch(() => { if (!c) setProjectEpisodes([]); });
+    return () => { c = true; };
+  }, [activeProjectId, phase]);
+
+  useEffect(() => {
     if (!activeProjectId || phase !== "done") {
       setProjectRoster([]);
       return;
@@ -653,22 +721,107 @@ export default function UploadMatchPage() {
     Boolean(c.default_voice_id),
   );
 
-  async function generateLineFromTranscript(segmentId: string, text: string) {
+  useEffect(() => {
+    if (!activeProjectId || phase !== "done") { setProjectClipCount(0); return; }
+    let c = false;
+    void api.listProjectClips(activeProjectId).then((rows) => {
+      if (!c) setProjectClipCount(rows.length);
+    }).catch(() => { if (!c) setProjectClipCount(0); });
+    return () => { c = true; };
+  }, [activeProjectId, phase, episodeReplacements]);
+
+  useEffect(() => {
+    if (editSegmentId && editRowRef.current) {
+      editRowRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [editSegmentId]);
+
+  function switchToEpisode(ep: EpisodeDto) {
+    if (sourceAudioRef.current) { sourceAudioRef.current.pause(); sourceAudioRef.current = null; }
+    setPlayingSourceSegId(null);
+    const media: EpisodeMediaJobResult = {
+      episode_id: ep.id,
+      project_id: ep.project_id,
+      source_video_path: ep.source_video_path ?? "",
+      extracted_audio_path: ep.extracted_audio_path ?? "",
+      thumbnail_paths: ep.thumbnail_paths ?? [],
+      duration_sec: ep.duration_sec ?? undefined,
+      transcript_segment_count: ep.segment_count,
+    };
+    setPersistedMedia(media);
+    setPhase("done");
+    setJob(null);
+    setTranscriptSegments([]);
+    setTranscriptFetchDone(false);
+    setTranscriptError(null);
+    setSpeakerGroups([]);
+    setSpeakerGroupsError(null);
+    setCreatedChars({});
+    setSelectedTranscriptSegmentId(null);
+    setEditSegmentId(null);
+    toast("Switched to imported video");
+  }
+
+  function handleDeleteSegment(segId: string) {
+    if (!transcriptEpisodeId) return;
+    setConfirmDeleteSegId(segId);
+  }
+
+  async function executeDeleteSegment() {
+    const ep = transcriptEpisodeId;
+    const segId = confirmDeleteSegId;
+    if (!ep || !segId) return;
+    setConfirmDeleteSegId(null);
+    try {
+      await api.deleteTranscriptSegment(ep, segId);
+      setTranscriptSegments((prev) => prev.filter((s) => s.segment_id !== segId));
+      toast("Transcript line removed");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not delete segment");
+    }
+  }
+
+  function playSourceSegment(episodeId: string, segmentId: string) {
+    if (playingSourceSegId === segmentId) {
+      sourceAudioRef.current?.pause();
+      setPlayingSourceSegId(null);
+      return;
+    }
+    if (sourceAudioRef.current) { sourceAudioRef.current.pause(); sourceAudioRef.current = null; }
+    const url = api.segmentSourceAudioUrl(episodeId, segmentId);
+    const audio = new Audio(url);
+    sourceAudioRef.current = audio;
+    setPlayingSourceSegId(segmentId);
+    audio.onended = () => { setPlayingSourceSegId(null); sourceAudioRef.current = null; };
+    audio.onerror = () => { setPlayingSourceSegId(null); sourceAudioRef.current = null; toast("Could not play source audio for this line"); };
+    audio.play().catch(() => { setPlayingSourceSegId(null); sourceAudioRef.current = null; });
+  }
+
+  async function generateLineFromTranscript(
+    segmentId: string,
+    text: string,
+    options?: { quiet?: boolean },
+  ): Promise<boolean> {
+    if (generatingSegmentId === segmentId || batchLineBusy) return false;
     const ep = transcriptEpisodeId;
     const cid = charPickBySegment[segmentId];
     if (!ep || !cid || !text.trim()) {
-      setError("Pick a character with a voice and a line to speak.");
-      return;
+      if (!options?.quiet) {
+        setError("Pick a character with a voice and a line to speak.");
+      }
+      return false;
     }
     const ch = projectRoster.find((c) => c.id === cid);
     if (!ch?.default_voice_id) {
-      setError(
-        "That character needs a voice. Attach one in Voice Studio first.",
-      );
-      return;
+      if (!options?.quiet) {
+        setError(
+          "That character needs a voice. Attach one in Voice Studio first.",
+        );
+      }
+      return false;
     }
     setGeneratingSegmentId(segmentId);
-    setError(null);
+    if (!options?.quiet) setError(null);
     try {
       const line = text.trim();
       const existing = episodeReplacements.find(
@@ -692,17 +845,114 @@ export default function UploadMatchPage() {
         );
         return [rep, ...others];
       });
-      toast("Line audio saved to this project");
+      if (!options?.quiet) toast("Line audio saved to this project");
+      return true;
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not generate audio");
+      if (!options?.quiet) {
+        setError(e instanceof ApiError ? e.message : "Could not generate audio");
+      }
+      return false;
     } finally {
       setGeneratingSegmentId(null);
     }
   }
 
+  async function generateAllAssignedTranscriptLines() {
+    const ep = transcriptEpisodeId;
+    if (!ep || !transcriptSegments.length) return;
+    setBatchLineBusy(true);
+    setError(null);
+    let n = 0;
+    try {
+      for (const row of transcriptSegments) {
+        const cid = charPickBySegment[row.segment_id];
+        if (!cid) continue;
+        const ch = projectRoster.find((c) => c.id === cid);
+        if (!ch?.default_voice_id) continue;
+        const ok = await generateLineFromTranscript(row.segment_id, row.text, {
+          quiet: true,
+        });
+        if (ok) n += 1;
+      }
+      toast(
+        n > 0
+          ? `Generated audio for ${n} line(s) with assigned voices.`
+          : "Assign a voiced character to lines first, then try again.",
+      );
+    } finally {
+      setBatchLineBusy(false);
+    }
+  }
+
+  async function generateAllLinesForSpeaker(speakerLabel: string) {
+    const ep = transcriptEpisodeId;
+    if (!ep || !transcriptSegments.length) return;
+    setBatchLineBusy(true);
+    setError(null);
+    let n = 0;
+    try {
+      for (const row of transcriptSegments) {
+        if ((row.speaker_label || "UNKNOWN") !== speakerLabel) continue;
+        const cid = charPickBySegment[row.segment_id];
+        if (!cid) continue;
+        const ch = projectRoster.find((c) => c.id === cid);
+        if (!ch?.default_voice_id) continue;
+        const ok = await generateLineFromTranscript(row.segment_id, row.text, {
+          quiet: true,
+        });
+        if (ok) n += 1;
+      }
+      toast(
+        n > 0
+          ? `Generated audio for ${n} line(s) for this speaker.`
+          : "Pick a voiced character for this speaker lines first.",
+      );
+    } finally {
+      setBatchLineBusy(false);
+    }
+  }
+
+  async function handleEnableSourceVoice(
+    rightsType: string,
+    proofNote: string,
+  ) {
+    const char = sourceVoiceModalChar;
+    if (!char) return;
+    setSourceVoiceBusy(true);
+    try {
+      const updated = await api.enableSourceMatchedVoice(char.id, {
+        rights_type: rightsType,
+        proof_note: proofNote,
+      });
+      setCreatedChars((prev) => {
+        const label = Object.entries(prev).find(
+          ([, c]) => c.id === char.id,
+        )?.[0];
+        if (!label) return prev;
+        return { ...prev, [label]: updated };
+      });
+      setProjectRoster((prev) =>
+        prev.map((c) => (c.id === char.id ? updated : c)),
+      );
+      toast("Source-matched voice enabled.");
+    } catch (e) {
+      const raw = e instanceof ApiError ? e.message : String(e);
+      const isPermission = /unauthori|permission|forbidden|401|403/i.test(raw);
+      const msg = isPermission
+        ? "Source-matched voice is not available for this workspace yet."
+        : "Could not set up source-matched voice right now. Please try again later.";
+      setError(msg);
+      toast(msg);
+    } finally {
+      setSourceVoiceBusy(false);
+      setSourceVoiceModalChar(null);
+    }
+  }
+
   async function handleRename(label: string, displayName: string) {
     const ep = transcriptEpisodeId;
-    if (!ep) return;
+    if (!ep || actionBusy) return;
+    setActionBusy(true);
     try {
       const updated = await api.renameSpeakerGroup(ep, label, {
         display_name: displayName,
@@ -710,10 +960,13 @@ export default function UploadMatchPage() {
       setSpeakerGroups((prev) =>
         prev.map((g) => (g.speaker_label === label ? updated : g)),
       );
+      toast("Speaker renamed");
     } catch (e) {
       setSpeakerGroupsError(
         e instanceof ApiError ? e.message : "Rename failed",
       );
+    } finally {
+      setActionBusy(false);
     }
     setEditingLabel(null);
   }
@@ -728,6 +981,7 @@ export default function UploadMatchPage() {
       setSpeakerGroups((prev) =>
         prev.map((g) => (g.speaker_label === label ? updated : g)),
       );
+      toast(isNarrator ? "Marked as narrator" : "Unmarked narrator");
     } catch (e) {
       setSpeakerGroupsError(
         e instanceof ApiError ? e.message : "Update failed",
@@ -737,7 +991,8 @@ export default function UploadMatchPage() {
 
   async function handleCreateCharacter(label: string, name: string) {
     const ep = transcriptEpisodeId;
-    if (!ep || !name.trim()) return;
+    if (!ep || !name.trim() || actionBusy) return;
+    setActionBusy(true);
     setCharCreateError(null);
     try {
       const c = await api.createCharacterFromGroup(ep, label, {
@@ -745,10 +1000,13 @@ export default function UploadMatchPage() {
         project_id: activeProjectId || undefined,
       });
       setCreatedChars((prev) => ({ ...prev, [label]: c }));
+      toast("Character created");
     } catch (e) {
       setCharCreateError(
         e instanceof ApiError ? e.message : "Create character failed",
       );
+    } finally {
+      setActionBusy(false);
     }
     setCreatingLabel(null);
   }
@@ -786,6 +1044,7 @@ export default function UploadMatchPage() {
         delete next[intoLabel];
         return next;
       });
+      toast("Speakers merged");
     } catch (e) {
       setSpeakerGroupsError(
         e instanceof ApiError ? e.message : "Could not merge cast entries",
@@ -832,72 +1091,59 @@ export default function UploadMatchPage() {
     speakerGroupsLoading,
   ]);
 
+  const workspaceReady = Boolean(mediaDone) && phase === "done";
+  const isReImporting = importBootKind === "fresh" && (phase === "uploading" || phase === "processing");
+
   return (
-    <div className="space-y-10">
-      <div className="flex flex-wrap items-end justify-between gap-6 pb-2">
+    <div className="space-y-6">
+      {/* ── Header ── */}
+      <div className="flex flex-wrap items-end justify-between gap-4 pb-1">
         <div className="max-w-2xl">
           <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
             <Wand2 className="h-3 w-3" />
-            Cast from footage
+            Import workspace
           </span>
-          <h1 className="mt-4 font-display text-5xl font-semibold leading-[1.05] tracking-tight text-balance text-foreground md:text-6xl">
+          <h1 className="mt-3 font-display text-4xl font-semibold leading-[1.1] tracking-tight text-foreground md:text-5xl">
             Import from Video
           </h1>
-          <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-muted-foreground">
-            Pulls a transcript and cast candidates from your clip. Confirmed roster
-            lives in Characters; voices in Voice Studio; line swaps in Replace Lines
-            after at least one voice exists.
+          <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
+            Upload a video to detect speakers, extract a transcript, create characters, attach voices, and generate audio all in one workspace.
           </p>
         </div>
       </div>
 
-      {importBootKind === "restored" && phase === "done" && mediaDone ? (
-        <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
-          Loaded your saved import for this project from this browser. Upload again
-          anytime to start a new run.
-        </div>
-      ) : null}
-      {importBootKind === "fresh" && (phase === "uploading" || phase === "processing") ? (
-        <div className="rounded-xl border border-border bg-surface-sunken/60 px-4 py-3 text-sm text-muted-foreground">
-          New import run. We will show fresh results here when this job finishes.
-        </div>
-      ) : null}
+      {/* ── Project pills ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Project</span>
+        {projects.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => setActiveProjectId(p.id)}
+            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all ${
+              activeProjectId === p.id
+                ? "bg-ink text-ink-foreground shadow-soft"
+                : "border border-border bg-surface text-foreground hover:border-foreground"
+            }`}
+            disabled={boot}
+          >
+            {p.name}
+          </button>
+        ))}
+      </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 rounded-2xl border border-border bg-surface p-3 shadow-soft sm:grid-cols-3 lg:grid-cols-6">
+      {/* ── Pipeline steps strip ── */}
+      <div className="grid grid-cols-3 gap-2 rounded-2xl border border-border bg-surface p-2.5 shadow-soft sm:grid-cols-6">
         {PIPELINE_ICONS.map((Icon, idx) => {
           const label = PIPELINE_STEPS[idx]!;
-          const active = pipelineActiveIndex === idx;
-          const past = pipelineActiveIndex > idx;
+          const active = pipelineActiveIndex === idx && (phase === "uploading" || phase === "processing");
+          const past = pipelineActiveIndex > idx || (phase === "done" && pipelineActiveIndex >= idx);
           return (
-            <div
-              key={label}
-              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 transition ${
-                active
-                  ? "bg-primary/10 ring-1 ring-primary/20"
-                  : past
-                    ? "bg-white/[0.02]"
-                    : "opacity-55"
-              }`}
-            >
-              <span
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                  active
-                    ? "bg-primary text-primary-foreground"
-                    : past
-                      ? "bg-surface-sunken text-foreground"
-                      : "bg-surface-sunken text-muted-foreground"
-                }`}
-              >
-                <Icon
-                  className={`h-3.5 w-3.5 ${active ? "motion-safe:animate-pulse" : ""}`}
-                  strokeWidth={2.25}
-                />
+            <div key={label} className={`flex items-center gap-2 rounded-xl px-2.5 py-2 transition ${active ? "bg-primary/10 ring-1 ring-primary/20" : past ? "bg-emerald-500/5" : "opacity-40"}`}>
+              <span className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${active ? "bg-primary text-primary-foreground" : past ? "bg-emerald-500/15 text-emerald-400" : "bg-surface-sunken text-muted-foreground"}`}>
+                {active ? (<><span className="absolute inset-0 rounded-lg bg-primary/30 motion-safe:animate-ping" /><Spinner className="h-3.5 w-3.5 border-t-primary-foreground" /></>) : past ? (<CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2.25} />) : (<Icon className="h-3 w-3" strokeWidth={2.25} />)}
               </span>
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-semibold leading-tight text-foreground">
-                  {label}
-                </div>
-              </div>
+              <span className={`text-[11px] font-semibold leading-tight ${past ? "text-emerald-400/90" : "text-foreground"}`}>{label}</span>
             </div>
           );
         })}
@@ -905,1004 +1151,520 @@ export default function UploadMatchPage() {
 
       {error ? <ErrorBanner title="Request error" detail={error} /> : null}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-border bg-card p-5 shadow-soft">
-            <label className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Project
-            </label>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {projects.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setActiveProjectId(p.id)}
-                  className={`rounded-full px-4 py-2 text-xs font-semibold transition-all ${
-                    activeProjectId === p.id
-                      ? "bg-ink text-ink-foreground shadow-soft"
-                      : "border border-border bg-surface text-foreground hover:border-foreground"
-                  }`}
-                  disabled={boot}
-                >
-                  {p.name}
-                </button>
-              ))}
+      {isReImporting ? (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/20">
+              <Spinner className="h-4 w-4 border-t-amber-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-foreground">
+                {phase === "uploading"
+                  ? "Uploading new video..."
+                  : job?.message || `${PIPELINE_STEPS[pipelineActiveIndex] ?? "Processing"}...`}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                A new import is being processed. The current workspace stays available below.
+              </p>
             </div>
           </div>
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+            {phase === "uploading" ? (
+              <div className="h-full rounded-full bg-amber-400 transition-[width] duration-300" style={{ width: `${Math.round(Math.min(1, Math.max(0, uploadRatio)) * 100)}%` }} />
+            ) : typeof job?.progress === "number" ? (
+              <div className="h-full rounded-full bg-amber-400/90 transition-[width] duration-500" style={{ width: `${Math.round(Math.min(1, Math.max(0, job.progress)) * 100)}%` }} />
+            ) : (
+              <div className="relative h-full w-full"><div className="motion-safe:animate-pulse absolute inset-y-0 left-0 w-2/5 rounded-full bg-gradient-to-r from-amber-400/25 via-amber-400/80 to-amber-400/25 [animation-duration:1.3s]" /></div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
-          <div className="relative overflow-hidden rounded-2xl border border-border bg-card shadow-soft">
-            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-teal" />
-            <div className="p-8">
-              <label
-                htmlFor="video-upload"
-                className="group flex cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed border-border bg-surface-sunken/40 p-12 text-center transition-all hover:border-primary/40 hover:bg-primary/5"
+      {importBootKind === "restored" && workspaceReady ? (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-2.5 text-sm text-foreground">
+          Loaded your saved import for this project. Upload again to start a new run.
+        </div>
+      ) : null}
+
+      {workspaceReady
+        && mediaDone?.transcript_coverage_low
+        && transcriptEpisodeId
+        && coverageBannerDismissedFor !== transcriptEpisodeId
+        ? (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-foreground">
+                Transcript coverage looks low for this import
+              </p>
+              <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                {typeof mediaDone.transcript_coverage_ratio === "number"
+                  ? `Only about ${Math.round(mediaDone.transcript_coverage_ratio * 100)}% of the audio produced transcript lines. `
+                  : ""}
+                You can edit lines inline, or re-upload a cleaner version of the file for better results.
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPersistedMedia(null);
+                  setPhase("idle");
+                  setImportBootKind("none");
+                  setCoverageBannerDismissedFor(transcriptEpisodeId);
+                }}
+                className="rounded-lg border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-foreground hover:border-foreground"
               >
-                <span className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/12 text-primary shadow-glow transition-transform group-hover:scale-110">
-                  <UploadCloud className="h-7 w-7" strokeWidth={2} />
-                  <span className="absolute -inset-1 rounded-2xl ring-1 ring-primary/20" />
-                </span>
-                <div>
-                  <div className="font-display text-xl font-semibold tracking-tight text-foreground">
-                    {file ? file.name : "Drop a video, or click to browse"}
-                  </div>
-                  <p className="mx-auto mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground">
-                    MP4, MOV, MKV, WebM, M4V or AVI. Upload and processing run on your computer. Nothing leaves the machine.
-                  </p>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[10px] font-mono text-muted-foreground">
-                  {["MP4", "MOV", "MKV", "WEBM", "M4V", "AVI"].map((f) => (
-                    <span
-                      key={f}
-                      className="rounded-md border border-border bg-surface px-2 py-0.5 uppercase tracking-wider"
-                    >
-                      {f}
-                    </span>
-                  ))}
-                </div>
-                <input
-                  id="video-upload"
-                  ref={inputRef}
-                  type="file"
-                  className="hidden"
-                  accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm,.m4v,.avi"
-                  onChange={(e) => {
-                    const fnext = e.target.files?.[0] ?? null;
-                    setFile(fnext);
-                    setImportBootKind("none");
-                    setPhase("idle");
-                    setJob(null);
-                    setPersistedMedia(null);
-                    setError(null);
-                    setTranscriptSegments([]);
-                    setTranscriptError(null);
-                    setTranscriptFetchDone(false);
-                    setSpeakerGroups([]);
-                    setSpeakerGroupsError(null);
-                    setSelectedTranscriptSegmentId(null);
-                    if (storageKey) {
-                      try {
-                        window.localStorage.removeItem(storageKey);
-                      } catch {
-                        /* ignore storage delete errors */
-                      }
-                    }
-                  }}
-                />
-              </label>
-
-              <div className="mt-6 flex flex-col items-center justify-between gap-4 sm:flex-row">
-                <div className="text-xs text-muted-foreground">
-                  {file ? (
-                    <>
-                      <span className="font-semibold text-foreground">Selected:</span> {file.name} (
-                      {(file.size / (1024 * 1024)).toFixed(2)} MB)
-                    </>
-                  ) : (
-                    "No file selected"
-                  )}
-                </div>
-                <button
-                  type="button"
-                  disabled={busy || !activeProjectId || !file}
-                  onClick={() => void startUpload()}
-                  className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-6 text-sm font-semibold text-primary-foreground shadow-glow transition hover:opacity-90 disabled:opacity-50"
-                >
-                  {busy ? (
-                    <>
-                      <Spinner className="h-4 w-4 border-t-primary-foreground" />
-                      {phase === "uploading" ? "Uploading…" : "Processing…"}
-                    </>
-                  ) : (
-                    <>
-                      <Wand2 className="h-4 w-4" />
-                      Upload &amp; process
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {(phase === "uploading" || phase === "processing") && (
-                <div className="mt-6 w-full space-y-4 text-left">
-                  <div className="flex items-start gap-3">
-                    <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-                      <Spinner className="h-5 w-5 border-t-primary" />
-                      <span className="pointer-events-none absolute inset-0 motion-safe:animate-ping rounded-xl bg-primary/15 [animation-duration:2s]" />
-                    </div>
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <p className="text-sm font-medium text-foreground">
-                        {phase === "uploading"
-                          ? "Uploading your video…"
-                          : job?.message || "Working on your import…"}
-                      </p>
-                      {phase === "processing" && processingTrust.longWait ? (
-                        <p className="text-[11px] leading-relaxed text-muted-foreground">
-                          Still processing. This can take a little while depending on
-                          video length and speech quality. Keep this tab open while we
-                          finish processing.
-                        </p>
-                      ) : (
-                        <p className="text-[11px] leading-relaxed text-muted-foreground">
-                          This can take a little while depending on video length and
-                          speech quality. Keep this tab open while we finish processing.
-                        </p>
-                      )}
-                      {phase === "processing" && processingTrust.severeStall ? (
-                        <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                          No progress updates from the server for several minutes. The
-                          job may still be working; check API logs or try again if it
-                          never finishes.
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                  {phase === "uploading" ? (
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
-                      <div
-                        className="h-full rounded-full bg-primary transition-[width] duration-300"
-                        style={{
-                          width: `${Math.round(Math.min(1, Math.max(0, uploadRatio)) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
-                      {processingTrust.determinate &&
-                      typeof job?.progress === "number" ? (
-                        <div
-                          className="h-full rounded-full bg-primary/90 transition-[width] duration-500"
-                          style={{
-                            width: `${Math.round(Math.min(1, Math.max(0, job.progress)) * 100)}%`,
-                          }}
-                        />
-                      ) : (
-                        <div className="relative h-full w-full">
-                          <div className="motion-safe:animate-pulse absolute inset-y-0 left-0 w-2/5 rounded-full bg-gradient-to-r from-primary/25 via-primary/80 to-primary/25 [animation-duration:1.3s]" />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
+                Try another upload
+              </button>
+              <button
+                type="button"
+                onClick={() => setCoverageBannerDismissedFor(transcriptEpisodeId)}
+                className="rounded-lg px-2 py-1.5 text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+              >
+                Dismiss
+              </button>
             </div>
           </div>
         </div>
+      ) : null}
 
-        <div className="space-y-6">
-        <Panel className="rounded-2xl border border-border bg-card p-6 shadow-soft">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Processing status
+      {/* ── Upload area ── */}
+      {!workspaceReady ? (
+        <div className="relative overflow-hidden rounded-2xl border border-border bg-card shadow-soft">
+          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-teal" />
+          <div className="p-6 lg:p-8">
+            <label
+              htmlFor="video-upload"
+              className="group flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border bg-surface-sunken/40 p-8 text-center transition-all hover:border-primary/40 hover:bg-primary/5 lg:p-10"
+            >
+              <span className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/12 text-primary shadow-glow transition-transform group-hover:scale-110">
+                <UploadCloud className="h-6 w-6" strokeWidth={2} />
+              </span>
+              <div className="font-display text-lg font-semibold tracking-tight text-foreground">
+                {file ? file.name : "Drop a video, or click to browse"}
               </div>
-              <h2 className="mt-1 font-display text-xl font-semibold tracking-tight text-foreground">
-                {job?.message
-                  ? job.message
-                  : mediaDone
-                    ? "Import ready"
-                    : "Idle. Ready when you are."}
-              </h2>
-            </div>
-            {job ? (
-              <Badge
-                tone={
-                  normalizeJobStatus(job.status) === "done"
-                    ? "success"
-                    : normalizeJobStatus(job.status) === "failed"
-                      ? "danger"
-                      : "accent"
-                }
-              >
-                {job.status}
-              </Badge>
-            ) : mediaDone ? (
-              <Badge tone="success">done</Badge>
-            ) : (
-              <Badge tone="default">idle</Badge>
-            )}
-          </div>
-
-          {job ? (
-            <div className="mt-4 space-y-3 text-sm">
-              {normalizeJobStatus(job.status) === "running" ||
-              normalizeJobStatus(job.status) === "queued" ? (
-                <div className="flex items-start gap-2">
-                  <Spinner className="mt-0.5 h-4 w-4 shrink-0 border-t-muted-foreground" />
-                  <p className="text-muted">
-                    {job.message || "Working on your import…"}
-                  </p>
-                </div>
-              ) : job.message ? (
-                <p className="text-muted">{job.message}</p>
-              ) : (
-                <p className="text-muted">Working on your import.</p>
-              )}
-            </div>
-          ) : mediaDone ? (
-            <p className="mt-4 text-sm text-muted">
-              Restored your latest processed upload for this project.
-            </p>
-          ) : (
-            <p className="mt-4 text-sm text-muted">
-              Choose a video and upload to extract audio, thumbnails, and a
-              transcript.
-            </p>
-          )}
-
-          {mediaDone ? (
-            <div className="mt-6 border-t border-white/[0.06] pt-6">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-5 w-5 text-accent" />
-                <h3 className="text-sm font-semibold text-text">
-                  Import ready
-                </h3>
-              </div>
-              {mediaDone.duration_sec != null ? (
-                <p className="mt-1 text-xs text-muted">
-                  Duration: {mediaDone.duration_sec.toFixed(2)}s
-                </p>
-              ) : null}
-              {mediaDone.transcript_language != null &&
-              mediaDone.transcript_language !== "" ? (
-                <p className="mt-1 text-xs text-muted">
-                  Transcript language: {mediaDone.transcript_language}
-                </p>
-              ) : null}
-              {mediaDone.transcript_segment_count != null ? (
-                <p className="mt-1 text-xs text-muted">
-                  Transcript segments: {mediaDone.transcript_segment_count}
-                </p>
-              ) : null}
-              {mediaDone.import_provider === "local" ? (
-                <p className="mt-1 text-xs text-muted">
-                  Transcript and speakers from on-device analysis.
-                  {mediaDone.fallback_reason != null &&
-                  mediaDone.fallback_reason !== "" ? (
-                    <> {mediaDone.fallback_reason}</>
-                  ) : null}
-                </p>
-              ) : mediaDone.import_provider ? (
-                <p className="mt-1 text-xs text-muted">
-                  Cast candidates from AI video analysis. Tags are grouped speakers,
-                  not guaranteed real-world identities.
-                </p>
-              ) : null}
-              <p className="mt-2 text-xs text-muted">
-                This import is saved for the active project on your computer.
+              <p className="mx-auto max-w-sm text-xs leading-relaxed text-muted-foreground">
+                MP4, MOV, MKV, WebM, M4V or AVI. Processing runs locally on your machine.
               </p>
-              <div className="mt-2">
-                <p className="text-[11px] font-medium text-muted">Frames from this import</p>
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {mediaDone.thumbnail_paths.map((rel, i) => (
-                  <div
-                    key={rel}
-                    className="overflow-hidden rounded-lg ring-1 ring-white/10"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={mediaUrl(rel)}
-                      alt={`Frame ${i + 1}`}
-                      className="h-24 w-full object-cover sm:h-28"
-                    />
-                    <div className="flex flex-col gap-1 border-t border-white/[0.06] bg-black/20 px-2 py-1.5">
-                      <a
-                        href={mediaUrl(rel)}
-                        download={`castweave-frame-${i + 1}.jpg`}
-                        className="text-[10px] font-medium text-accent hover:underline"
-                      >
-                        Download
-                      </a>
-                      {transcriptEpisodeId && projectRoster.length > 0 ? (
-                        <label className="text-[10px] text-muted">
-                          <span className="sr-only">Use as character photo</span>
-                          <select
-                            className="mt-0.5 w-full rounded border border-white/[0.1] bg-canvas/80 px-1 py-0.5 text-[10px] text-text"
-                            defaultValue=""
-                            onChange={(e) => {
-                              const cid = e.target.value;
-                              if (!cid || !transcriptEpisodeId) return;
-                              void (async () => {
-                                try {
-                                  await api.setCharacterAvatarFromEpisodeThumb(
-                                    cid,
-                                    {
-                                      episode_id: transcriptEpisodeId,
-                                      thumb_index: i,
-                                    },
-                                  );
-                                  toast("Character photo updated");
-                                } finally {
-                                  e.target.value = "";
-                                }
-                              })();
-                            }}
-                          >
-                            <option value="">Use as character photo…</option>
-                            {projectRoster.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      ) : null}
-                    </div>
-                  </div>
+              <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] font-mono text-muted-foreground">
+                {["MP4", "MOV", "MKV", "WEBM", "M4V", "AVI"].map((f) => (
+                  <span key={f} className="rounded-md border border-border bg-surface px-1.5 py-0.5 uppercase tracking-wider">{f}</span>
                 ))}
               </div>
-
-              <div className="mt-6 border-t border-white/[0.06] pt-6">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 max-w-xl">
-                    <h3 className="text-sm font-semibold text-text">
-                      Transcript
-                    </h3>
-                    <p className="mt-1 text-xs leading-relaxed text-muted">
-                      Timestamp, speaker tag, and line text.
-                    </p>
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    {showTranscriptSpinner ? (
-                      <Badge tone="accent">Loading…</Badge>
-                    ) : (
-                      <Badge tone="default">
-                        {transcriptSegments.length} segments
-                      </Badge>
-                    )}
-                    {transcriptEpisodeId &&
-                    transcriptFetchDone &&
-                    !transcriptError &&
-                    transcriptSegments.length > 0 ? (
-                      <div className="flex flex-wrap justify-end gap-2 text-[10px] font-medium">
-                        <a
-                          href={api.episodeTranscriptExportUrl(
-                            transcriptEpisodeId,
-                            "txt",
-                          )}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-accent underline-offset-2 hover:underline"
-                        >
-                          Transcript .txt
-                        </a>
-                        <a
-                          href={api.episodeTranscriptExportUrl(
-                            transcriptEpisodeId,
-                            "srt",
-                          )}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-accent underline-offset-2 hover:underline"
-                        >
-                          Subtitles .srt
-                        </a>
-                        <a
-                          href={api.episodeTranscriptExportUrl(
-                            transcriptEpisodeId,
-                            "vtt",
-                          )}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-accent underline-offset-2 hover:underline"
-                        >
-                          Subtitles .vtt
-                        </a>
-                      </div>
-                    ) : null}
+              <input id="video-upload" ref={inputRef} type="file" className="hidden" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm,.m4v,.avi" onChange={(e) => { const fnext = e.target.files?.[0] ?? null; setFile(fnext); setImportBootKind("none"); setPhase("idle"); setJob(null); setPersistedMedia(null); setError(null); setTranscriptSegments([]); setTranscriptError(null); setTranscriptFetchDone(false); setSpeakerGroups([]); setSpeakerGroupsError(null); setSelectedTranscriptSegmentId(null); if (storageKey) { try { window.localStorage.removeItem(storageKey); } catch { /* ignore */ } } }} />
+            </label>
+            <div className="mt-4 flex items-center justify-between gap-4">
+              <div className="text-xs text-muted-foreground">{file ? (<><span className="font-semibold text-foreground">Selected:</span> {file.name} ({(file.size / (1024 * 1024)).toFixed(1)} MB)</>) : "No file selected"}</div>
+              <button type="button" disabled={busy || !activeProjectId || !file} onClick={() => void startUpload()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-glow transition hover:opacity-90 disabled:opacity-50">
+                {busy ? (<><Spinner className="h-4 w-4 border-t-primary-foreground" />{phase === "uploading" ? "Uploading…" : "Processing…"}</>) : (<><Wand2 className="h-4 w-4" />Upload and process</>)}
+              </button>
+            </div>
+            {(phase === "uploading" || phase === "processing") && (
+              <div className="mt-5 space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10"><Spinner className="h-4 w-4 border-t-primary" /><span className="pointer-events-none absolute inset-0 motion-safe:animate-ping rounded-xl bg-primary/15 [animation-duration:2s]" /></div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground">{phase === "uploading" ? "Uploading your video…" : job?.message || `${PIPELINE_STEPS[pipelineActiveIndex] ?? "Working on your import"}…`}</p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">Keep this tab open. Processing time depends on video length.</p>
+                    {phase === "processing" && processingTrust.severeStall ? (<p className="mt-1 text-[11px] text-amber-400">No server updates for several minutes. Check API logs or try again.</p>) : null}
                   </div>
                 </div>
-                {transcriptError ? (
-                  <div className="mt-3">
-                    <ErrorBanner
-                      title="Transcript error"
-                      detail={transcriptError}
-                    />
-                  </div>
-                ) : null}
-                {showTranscriptSpinner && !transcriptError ? (
-                  <div className="mt-4 flex items-center gap-2 text-sm text-muted">
-                    <Spinner className="h-4 w-4 border-t-canvas" />
-                    Loading transcript…
-                  </div>
-                ) : null}
-                {transcriptFetchDone &&
-                !transcriptError &&
-                transcriptSegments.length === 0 ? (
-                  <p className="mt-3 text-sm text-muted">
-                    No transcript segments (silent clip or model returned empty).
-                  </p>
-                ) : null}
-                {transcriptFetchDone && transcriptSegments.length > 0 ? (
-                  <ul className="mt-4 max-h-96 space-y-1 overflow-y-auto rounded-lg bg-white/[0.015] p-2 ring-1 ring-white/[0.05]">
-                    {transcriptSegments.map((row) => {
-                      const group = speakerGroups.find(
-                        (g) => g.speaker_label === row.speaker_label,
-                      );
-                      const label =
-                        group?.display_name ?? row.speaker_label ?? "Unknown";
-                      const ep = transcriptEpisodeId;
-                      const sel = selectedTranscriptSegmentId === row.segment_id;
-                      return (
-                        <li
-                          key={row.segment_id}
-                          className={`rounded-md text-sm transition ${
-                            sel ? "bg-accent/10 ring-1 ring-accent/30" : ""
-                          }`}
-                        >
-                          <div className="flex flex-col gap-1.5 px-2.5 py-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-                            <button
-                              type="button"
-                              className="min-w-0 flex-1 text-left"
-                              onClick={() =>
-                                setSelectedTranscriptSegmentId(row.segment_id)
-                              }
-                            >
-                              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                                <span className="font-mono text-[11px] text-muted">
-                                  {formatTimecode(row.start_time)} to{" "}
-                                  {formatTimecode(row.end_time)}
-                                </span>
-                                <Badge
-                                  tone={
-                                    group?.is_narrator
-                                      ? "violet"
-                                      : row.speaker_label?.startsWith(
-                                            "SPEAKER_",
-                                          )
-                                        ? "accent"
-                                        : "default"
-                                  }
-                                >
-                                  {label}
-                                </Badge>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  {phase === "uploading" ? (<div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${Math.round(Math.min(1, Math.max(0, uploadRatio)) * 100)}%` }} />) : processingTrust.determinate && typeof job?.progress === "number" ? (<div className="h-full rounded-full bg-primary/90 transition-[width] duration-500" style={{ width: `${Math.round(Math.min(1, Math.max(0, job.progress)) * 100)}%` }} />) : (<div className="relative h-full w-full"><div className="motion-safe:animate-pulse absolute inset-y-0 left-0 w-2/5 rounded-full bg-gradient-to-r from-primary/25 via-primary/80 to-primary/25 [animation-duration:1.3s]" /></div>)}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── MAIN TWO-PANE WORKSPACE (shown after import) ── */}
+      {workspaceReady ? (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[340px_1fr]">
+
+          {/* ─── LEFT: Cast panel ─── */}
+          <aside className="space-y-4">
+            <Panel className="rounded-2xl border border-border bg-card p-4 shadow-soft">
+              <div className="flex items-center justify-between">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <Users className="h-4 w-4 text-accent" />
+                  Detected cast
+                </h2>
+                {speakerGroupsLoading ? (<Spinner className="h-3.5 w-3.5 border-t-accent" />) : (<Badge tone="default">{visibleCastGroups.length} speaker{visibleCastGroups.length === 1 ? "" : "s"}{ignoredLabels.size > 0 ? ` · ${ignoredLabels.size} skipped` : ""}</Badge>)}
+              </div>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                Rename is local to this import. Create character adds a reusable project entity. Then attach a voice in Voice Studio.
+              </p>
+              {speakerGroupsError ? (<div className="mt-2"><ErrorBanner title="Cast detection" detail={speakerGroupsError} /></div>) : null}
+              {charCreateError ? (<div className="mt-2"><ErrorBanner title="Character creation" detail={charCreateError} /></div>) : null}
+
+              {speakerGroupsLoading ? (<div className="mt-3 flex items-center gap-2 text-sm text-muted"><Spinner className="h-4 w-4 border-t-canvas" />Resolving detected cast…</div>) : null}
+              {!speakerGroupsLoading && speakerGroups.length === 0 ? (<p className="mt-3 text-xs text-muted-foreground">No separate voices detected. Try a clip with clearer speaker turns, or add characters manually.</p>) : null}
+
+              {!speakerGroupsLoading && visibleCastGroups.length > 0 ? (
+                <ul className="mt-3 space-y-2">
+                  {visibleCastGroups.map((g) => {
+                    const created = createdChars[g.speaker_label];
+                    const others = visibleCastGroups.filter((x) => x.speaker_label !== g.speaker_label).map((x) => x.speaker_label);
+                    const mergePick = mergeTargetFor[g.speaker_label] ?? others[0] ?? "";
+                    return (
+                      <li key={g.speaker_label} id={speakerRowDomId(g.speaker_label)} className="scroll-mt-24 rounded-xl bg-white/[0.02] p-3 ring-1 ring-white/[0.06]">
+                        <div className="flex items-start gap-2">
+                          <Mic2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0 flex-1">
+                            {editingLabel === g.speaker_label ? (
+                              <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); void handleRename(g.speaker_label, editValue); }}>
+                                <input className="min-w-[8rem] flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1 text-sm text-text outline-none focus:border-accent/40" value={editValue} onChange={(e) => setEditValue(e.target.value)} autoFocus />
+                                <Button type="submit" variant="secondary">Save</Button>
+                                <Button type="button" variant="secondary" onClick={() => setEditingLabel(null)}>Cancel</Button>
+                              </form>
+                            ) : (
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                <span className="text-sm font-medium text-foreground">{g.display_name}</span>
+                                {g.display_name !== g.speaker_label ? (<span className="text-[11px] text-muted-foreground">({g.speaker_label})</span>) : null}
+                                {g.is_narrator ? (<Badge tone="violet">narrator</Badge>) : null}
                               </div>
-                              <p className="mt-1 text-[13px] leading-snug text-text">
-                                {row.text}
-                              </p>
-                            </button>
-                            {ep ? (
-                              <div className="flex shrink-0 flex-col gap-2 self-start sm:mt-0.5 sm:items-end">
-                                {anyCharacterHasVoice ? (
-                                  <>
-                                    <label className="block text-[10px] font-medium text-muted">
-                                      <span className="sr-only">Character</span>
-                                      <select
-                                        className="max-w-[11rem] rounded-md border border-white/[0.1] bg-canvas/80 px-2 py-1 text-[11px] text-text"
-                                        value={charPickBySegment[row.segment_id] ?? ""}
-                                        onChange={(e) => {
-                                          const v = e.target.value;
-                                          setCharPickBySegment((prev) => ({
-                                            ...prev,
-                                            [row.segment_id]: v,
-                                          }));
-                                        }}
-                                        onClick={(e: MouseEvent) =>
-                                          e.stopPropagation()
-                                        }
-                                      >
-                                        <option value="">Character…</option>
-                                        {projectRoster
-                                          .filter((c) => c.default_voice_id)
-                                          .map((c) => (
-                                            <option key={c.id} value={c.id}>
-                                              {c.name}
-                                            </option>
-                                          ))}
-                                      </select>
-                                    </label>
-                                    <div className="flex flex-wrap justify-end gap-1.5">
-                                      <button
-                                        type="button"
-                                        className="rounded-md bg-primary/90 px-2.5 py-1 text-[11px] font-semibold text-primary-foreground ring-1 ring-primary/30 disabled:opacity-50"
-                                        disabled={
-                                          generatingSegmentId === row.segment_id
-                                        }
-                                        onClick={(e: MouseEvent) => {
-                                          e.stopPropagation();
-                                          void generateLineFromTranscript(
-                                            row.segment_id,
-                                            row.text,
-                                          );
-                                        }}
-                                      >
-                                        {generatingSegmentId === row.segment_id
-                                          ? "Working…"
-                                          : "Generate with voice"}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="rounded-md bg-white/[0.06] px-2.5 py-1 text-[11px] font-medium text-text ring-1 ring-white/[0.08] hover:bg-white/[0.1]"
-                                        onClick={(e: MouseEvent) => {
-                                          e.stopPropagation();
-                                          if (editSegmentId === row.segment_id) {
-                                            setEditSegmentId(null);
-                                            setEditSegmentDraft("");
-                                          } else {
-                                            setEditSegmentId(row.segment_id);
-                                            setEditSegmentDraft(row.text);
-                                          }
-                                        }}
-                                      >
-                                        {editSegmentId === row.segment_id
-                                          ? "Close edit"
-                                          : "Edit then generate"}
-                                      </button>
-                                    </div>
-                                  </>
-                                ) : null}
-                                <Link
-                                  href={`/replace-lines?episode=${encodeURIComponent(ep)}&segment=${encodeURIComponent(row.segment_id)}`}
-                                  title={
-                                    anyCharacterHasVoice
-                                      ? "Advanced: rewrite and refine in Replace Lines"
-                                      : "Attach voices first, then open Replace Lines"
-                                  }
-                                  className={`inline-flex items-center justify-center rounded-md px-2.5 py-1 text-[11px] font-medium ring-1 transition ${
-                                    anyCharacterHasVoice
-                                      ? "bg-white/[0.06] text-text ring-white/[0.08] hover:bg-white/[0.1]"
-                                      : "bg-white/[0.02] text-muted-foreground ring-white/[0.06] hover:bg-white/[0.04]"
-                                  }`}
-                                  onClick={(e: MouseEvent) => e.stopPropagation()}
-                                >
-                                  Use in Replace Lines
+                            )}
+                            <p className="mt-0.5 text-[11px] text-muted-foreground">{g.segment_count} segments · {g.total_speaking_duration.toFixed(1)}s</p>
+                          </div>
+                        </div>
+
+                        {created ? (
+                          <div className="mt-2.5 space-y-2">
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />Character created
+                              {created.voice_display_name ? (
+                                <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+                                  Voice: {created.voice_display_name}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {!created.default_voice_id ? (
+                                <Link href={`/voice-studio?character=${encodeURIComponent(created.id)}&panel=voice&focus=attach`} className="inline-flex h-8 items-center gap-1 rounded-lg bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground shadow-glow transition hover:opacity-90">
+                                  <Volume2 className="h-3 w-3" />Attach voice
                                 </Link>
+                              ) : (
+                                <Link href={`/voice-studio?character=${encodeURIComponent(created.id)}&panel=voice`} className="inline-flex h-8 items-center gap-1 rounded-lg bg-white/[0.08] px-2.5 text-[11px] font-semibold text-foreground ring-1 ring-white/[0.1] transition hover:bg-white/[0.12]">
+                                  Voice Studio
+                                </Link>
+                              )}
+                              <Button variant="secondary" className="!h-8 !px-2 !text-[11px]" onClick={() => { setEditingLabel(g.speaker_label); setEditValue(g.display_name); }}>
+                                <Pencil className="h-3 w-3" />Rename
+                              </Button>
+                            </div>
+                            {anyCharacterHasVoice && transcriptFetchDone && !transcriptError ? (
+                              <button type="button" className="rounded-md bg-white/[0.06] px-2 py-1 text-[11px] font-medium text-foreground ring-1 ring-white/[0.1] hover:bg-white/[0.1] disabled:opacity-50" disabled={batchLineBusy || generatingSegmentId != null} onClick={() => void generateAllLinesForSpeaker(g.speaker_label)}>
+                                Generate all lines for this speaker
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : creatingLabel === g.speaker_label ? (
+                          <form className="mt-2.5 flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); void handleCreateCharacter(g.speaker_label, charNameInput); }}>
+                            <input className="min-w-[8rem] flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-sm text-text outline-none focus:border-accent/40" placeholder="Character name" value={charNameInput} onChange={(e) => setCharNameInput(e.target.value)} autoFocus />
+                            <Button type="submit" disabled={!charNameInput.trim()}>Save</Button>
+                            <Button type="button" variant="secondary" onClick={() => setCreatingLabel(null)}>Cancel</Button>
+                          </form>
+                        ) : (
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
+                            <Button variant="secondary" className="!h-8 !px-2 !text-[11px]" onClick={() => { setCreatingLabel(g.speaker_label); setCharNameInput(g.display_name !== g.speaker_label ? g.display_name : ""); }}>
+                              <UserPlus className="h-3 w-3" />Create character
+                            </Button>
+                            <Button variant="secondary" className="!h-8 !px-2 !text-[11px]" onClick={() => { setEditingLabel(g.speaker_label); setEditValue(g.display_name); }}>
+                              <Pencil className="h-3 w-3" />Rename
+                            </Button>
+                            <Button variant="secondary" className="!h-8 !px-2 !text-[11px]" onClick={() => toggleIgnore(g.speaker_label)}>Skip</Button>
+                          </div>
+                        )}
+
+                        {editingLabel !== g.speaker_label ? (
+                          <details className="group mt-2 border-t border-white/[0.06] pt-2">
+                            <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                              <MoreHorizontal className="h-3 w-3" />More
+                            </summary>
+                            <div className="mt-2 flex flex-col gap-2">
+                              <Button type="button" variant="secondary" className="w-full justify-start !px-2 !py-1 !text-[11px]" onClick={() => void handleNarrator(g.speaker_label, !g.is_narrator)}>
+                                {g.is_narrator ? "Unmark narrator" : "Mark narrator / off-screen"}
+                              </Button>
+                              {created && created.source_episode_id && created.source_speaker_labels?.length > 0 && !created.source_matched_voice_enabled && !created.default_voice_id ? (
+                                <button type="button" className="w-full rounded-lg border border-amber-500/20 bg-amber-500/5 px-2 py-1 text-left text-[11px] font-medium text-amber-300 transition hover:bg-amber-500/10" onClick={() => setSourceVoiceModalChar(created)}>
+                                  <Mic2 className="mr-1 inline h-3 w-3" />Use source-matched voice (advanced)
+                                </button>
+                              ) : null}
+                              {others.length > 0 ? (
+                                <div className="space-y-1">
+                                  <p className="text-[10px] text-muted-foreground">If this is the same person as another detected speaker, merge them together.</p>
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-[11px] text-muted-foreground">Merge into</span>
+                                    <select className="rounded-lg border border-white/[0.12] bg-canvas/80 px-1.5 py-1 text-[11px] text-text outline-none" value={mergePick} onChange={(e) => setMergeTargetFor((m) => ({ ...m, [g.speaker_label]: e.target.value }))}>
+                                      {others.map((lab) => { const og = speakerGroups.find((x) => x.speaker_label === lab); return (<option key={lab} value={lab}>{og?.display_name ?? lab}</option>); })}
+                                    </select>
+                                    <Button type="button" variant="secondary" className="!px-2 !py-0.5 !text-[11px]" disabled={mergeBusy || !mergePick} onClick={() => void runMerge(g.speaker_label, mergePick)}>
+                                      <GitMerge className="h-3 w-3" />Merge
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          </details>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+
+              {ignoredLabels.size > 0 ? (
+                <details className="mt-3 rounded-xl bg-white/[0.02] p-2 ring-1 ring-white/[0.06]">
+                  <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">Skipped ({ignoredLabels.size})</summary>
+                  <div className="mt-2 flex flex-wrap gap-1.5">{[...ignoredLabels].map((lab) => (<button key={lab} type="button" className="rounded-full bg-white/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-foreground ring-1 ring-white/[0.08] hover:bg-white/[0.1]" onClick={() => toggleIgnore(lab)}>Restore {lab}</button>))}</div>
+                </details>
+              ) : null}
+            </Panel>
+
+            {/* Re-upload */}
+            <details className="rounded-2xl border border-border bg-card p-3 shadow-soft">
+              <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                Upload a new video
+              </summary>
+              <div className="mt-3">
+                <label htmlFor="video-upload-re" className="group flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface-sunken/40 p-4 text-center hover:border-primary/40 hover:bg-primary/5">
+                  <UploadCloud className="h-5 w-5 text-primary" />
+                  <span className="text-xs font-medium text-foreground">{file ? file.name : "Choose file"}</span>
+                  <input id="video-upload-re" type="file" className="hidden" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm,.m4v,.avi" onChange={(e) => { const fnext = e.target.files?.[0] ?? null; setFile(fnext); }} />
+                </label>
+                <button type="button" disabled={busy || isReImporting || !activeProjectId || !file} onClick={() => void startUpload()} className="mt-2 w-full rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
+                  {busy || isReImporting ? "Import in progress..." : "Upload and process"}
+                </button>
+              </div>
+            </details>
+
+            {/* Episode switcher */}
+            {projectEpisodes.length > 0 ? (
+              <div className="rounded-2xl border border-border bg-card p-3 shadow-soft">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Imported videos ({projectEpisodes.length})
+                  {isReImporting ? <span className="ml-1 text-amber-400">+1 importing...</span> : null}
+                </p>
+                <div className="space-y-1">
+                  {projectEpisodes.map((ep) => {
+                    const active = transcriptEpisodeId === ep.id;
+                    const label = ep.title || (ep.source_video_path ? ep.source_video_path.split("/").pop() : null) || ep.id.slice(0, 8);
+                    const date = ep.updated_at ? new Date(ep.updated_at).toLocaleDateString() : "";
+                    return (
+                      <button key={ep.id} type="button" onClick={() => { if (!active) switchToEpisode(ep); }} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs ${active ? "bg-primary/10 font-semibold text-primary ring-1 ring-primary/20" : "text-foreground hover:bg-white/[0.06]"}`}>
+                        <span className="truncate flex-1">{label}</span>
+                        <span className="shrink-0 text-[10px] text-muted-foreground">{date}</span>
+                        {active ? <span className="shrink-0 rounded bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold text-primary">Active</span> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </aside>
+
+          {/* ─── RIGHT: Transcript workspace ─── */}
+          <main className="space-y-4">
+            <Panel className="rounded-2xl border border-border bg-card p-4 shadow-soft">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-foreground">Transcript</h2>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    {mediaDone?.duration_sec != null ? `${mediaDone.duration_sec.toFixed(0)}s` : ""}
+                    {mediaDone?.transcript_language ? ` · ${spokenLanguageUiLabel(mediaDone.transcript_language)}` : ""}
+                    {transcriptFetchDone ? ` · ${transcriptSegments.length} segments` : ""}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {showTranscriptSpinner ? (<Badge tone="accent">Loading…</Badge>) : null}
+                  {anyCharacterHasVoice && transcriptFetchDone && !transcriptError && transcriptSegments.length > 0 ? (
+                    <button type="button" className="rounded-lg bg-primary/90 px-3 py-1.5 text-[11px] font-semibold text-primary-foreground ring-1 ring-primary/30 disabled:opacity-50" disabled={batchLineBusy || generatingSegmentId != null} onClick={() => void generateAllAssignedTranscriptLines()}>
+                      {batchLineBusy ? "Batch working…" : "Generate all assigned lines"}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              {transcriptError ? (<div className="mt-3"><ErrorBanner title="Transcript error" detail={transcriptError} /></div>) : null}
+              {showTranscriptSpinner && !transcriptError ? (<div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"><Spinner className="h-4 w-4 border-t-canvas" />Loading transcript…</div>) : null}
+              {transcriptFetchDone && !transcriptError && transcriptSegments.length === 0 ? (<p className="mt-3 text-sm text-muted-foreground">No transcript segments (silent clip or model returned empty).</p>) : null}
+
+              {transcriptFetchDone && transcriptSegments.length > 0 ? (
+                <ul className="mt-3 max-h-[calc(100vh-280px)] space-y-1 overflow-y-auto rounded-lg bg-white/[0.015] p-1.5 ring-1 ring-white/[0.05]">
+                  {transcriptSegments.map((row) => {
+                    const group = speakerGroups.find((g) => g.speaker_label === row.speaker_label);
+                    const label = group?.display_name ?? row.speaker_label ?? "Unknown";
+                    const ep = transcriptEpisodeId;
+                    const sel = selectedTranscriptSegmentId === row.segment_id;
+                    const segRep = episodeReplacements.find((r) => r.segment_id === row.segment_id);
+                    return (
+                      <li key={row.segment_id} ref={editSegmentId === row.segment_id ? editRowRef : undefined} className={`rounded-lg text-sm transition ${sel ? "bg-accent/10 ring-1 ring-accent/30" : "hover:bg-white/[0.02]"}`}>
+                        <div className="flex gap-2 px-2.5 py-2">
+                          <div className="min-w-0 flex-1">
+                            <button type="button" className="w-full text-left" onClick={() => setSelectedTranscriptSegmentId(row.segment_id)}>
+                              <div className="flex flex-wrap items-baseline gap-2">
+                                <span className="font-mono text-[11px] text-muted-foreground">{formatTimecode(row.start_time)}</span>
+                                <Badge tone={group?.is_narrator ? "violet" : row.speaker_label?.startsWith("SPEAKER_") ? "accent" : "default"}>{label}</Badge>
+                              </div>
+                              <p className="mt-0.5 text-[13px] leading-snug text-foreground">{row.text}</p>
+                            </button>
+                            {segRep?.audio_url ? (
+                              <div className="mt-1.5 flex items-center gap-2">
+                                <audio controls className="h-7 max-w-[200px]" src={mediaUrl(segRep.audio_url.replace(/^\/media\//, ""))} />
+                                <Badge tone="success">Generated</Badge>
                               </div>
                             ) : null}
                           </div>
-                          {editSegmentId === row.segment_id ? (
-                            <div className="border-t border-white/[0.06] px-2.5 py-2">
-                              <label className="text-[10px] font-medium text-muted">
-                                Text to speak
-                                <textarea
-                                  className="mt-1 w-full rounded-md border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-[13px] text-text"
-                                  rows={3}
-                                  value={editSegmentDraft}
-                                  onChange={(e) =>
-                                    setEditSegmentDraft(e.target.value)
-                                  }
-                                />
-                              </label>
-                              <button
-                                type="button"
-                                className="mt-2 rounded-md bg-primary/90 px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-                                disabled={
-                                  generatingSegmentId === row.segment_id
-                                }
-                                onClick={() =>
-                                  void generateLineFromTranscript(
-                                    row.segment_id,
-                                    editSegmentDraft,
-                                  )
-                                }
-                              >
-                                {generatingSegmentId === row.segment_id
-                                  ? "Generating…"
-                                  : "Generate edited line"}
+                          {ep ? (
+                            <div className="flex shrink-0 flex-col items-end gap-1 self-start">
+                              {/* Play source audio */}
+                              <button type="button" title="Play source audio" className={`flex h-7 w-7 items-center justify-center rounded-md transition ${playingSourceSegId === row.segment_id ? "bg-primary text-primary-foreground" : "bg-white/[0.06] text-muted-foreground ring-1 ring-white/[0.08] hover:bg-white/[0.1] hover:text-foreground"}`} onClick={(e: MouseEvent) => { e.stopPropagation(); playSourceSegment(ep, row.segment_id); }}>
+                                {playingSourceSegId === row.segment_id ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                              </button>
+                              {anyCharacterHasVoice ? (
+                                <>
+                                  <select className="max-w-[10rem] rounded-md border border-white/[0.1] bg-canvas/80 px-1.5 py-0.5 text-[11px] text-foreground" value={charPickBySegment[row.segment_id] ?? ""} onChange={(e) => { setCharPickBySegment((prev) => ({ ...prev, [row.segment_id]: e.target.value })); }} onClick={(e: MouseEvent) => e.stopPropagation()}>
+                                    <option value="">Character…</option>
+                                    {projectRoster.filter((c) => c.default_voice_id).map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                                  </select>
+                                  <button type="button" className="rounded-md bg-primary/90 px-2 py-0.5 text-[11px] font-semibold text-primary-foreground ring-1 ring-primary/30 disabled:opacity-50" disabled={generatingSegmentId === row.segment_id || batchLineBusy} onClick={(e: MouseEvent) => { e.stopPropagation(); void generateLineFromTranscript(row.segment_id, row.text); }}>
+                                    {generatingSegmentId === row.segment_id ? "Working…" : "Generate"}
+                                  </button>
+                                  <button type="button" className="rounded-md bg-white/[0.06] px-2 py-0.5 text-[11px] font-medium text-foreground ring-1 ring-white/[0.08] hover:bg-white/[0.1]" onClick={(e: MouseEvent) => { e.stopPropagation(); if (editSegmentId === row.segment_id) { setEditSegmentId(null); setEditSegmentDraft(""); } else { setEditSegmentId(row.segment_id); setEditSegmentDraft(row.text); } }}>
+                                    {editSegmentId === row.segment_id ? "Close" : "Edit"}
+                                  </button>
+                                </>
+                              ) : null}
+                              <Link href={`/replace-lines?episode=${encodeURIComponent(ep)}&segment=${encodeURIComponent(row.segment_id)}`} className="text-[10px] font-medium text-muted-foreground hover:text-foreground hover:underline" onClick={(e: MouseEvent) => e.stopPropagation()}>
+                                Replace Lines
+                              </Link>
+                              <button type="button" className="text-[10px] font-medium text-red-400/60 hover:text-red-400 hover:underline" onClick={(e: MouseEvent) => { e.stopPropagation(); void handleDeleteSegment(row.segment_id); }}>
+                                Remove
                               </button>
                             </div>
                           ) : null}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
+                        </div>
+                        {editSegmentId === row.segment_id ? (
+                          <div className="border-t border-white/[0.06] px-2.5 py-2">
+                            <textarea className="w-full rounded-md border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-[13px] text-foreground" rows={2} value={editSegmentDraft} onChange={(e) => setEditSegmentDraft(e.target.value)} />
+                            <button type="button" className="mt-1.5 rounded-md bg-primary/90 px-3 py-1 text-xs font-semibold text-primary-foreground disabled:opacity-50" disabled={generatingSegmentId === row.segment_id || batchLineBusy} onClick={() => void generateLineFromTranscript(row.segment_id, editSegmentDraft)}>
+                              {generatingSegmentId === row.segment_id ? "Generating…" : "Generate edited line"}
+                            </button>
+                          </div>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </Panel>
 
-          {mediaDone && transcriptFetchDone ? (
-              <div className="mt-8 border-t border-white/[0.08] pt-6">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex min-w-0 max-w-xl items-start gap-2">
-                  <Users className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
-                  <div>
-                    <h3 className="text-sm font-semibold text-text">
-                      Detected cast
-                    </h3>
-                    <p className="mt-1 text-xs leading-relaxed text-muted">
-                      <span className="font-medium text-text/85">Rename</span> only
-                      fixes the label for this import.
-                      <span className="font-medium text-text/85">
-                        {" "}
-                        Create character
-                      </span>{" "}
-                      adds a real roster entry in this project. Then attach a voice
-                      in Voice Studio.
-                    </p>
+            {/* Replace Lines CTA */}
+            {transcriptEpisodeId && transcriptSegments.length > 0 ? (
+              <div className={`rounded-xl px-4 py-3 ${anyCharacterHasVoice ? "border border-emerald-500/25 bg-emerald-500/5" : "border border-white/[0.08] bg-white/[0.02]"}`}>
+                {anyCharacterHasVoice ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-foreground">Voices assigned. You can also use the advanced Replace Lines tool.</p>
+                    <Link href={`/replace-lines?episode=${encodeURIComponent(transcriptEpisodeId)}`} className="text-sm font-semibold text-accent underline-offset-4 hover:underline">Open Replace Lines</Link>
                   </div>
-                </div>
-                {speakerGroupsLoading ? (
-                  <Badge tone="accent">Loading…</Badge>
                 ) : (
-                  <Badge tone="default">
-                    {visibleCastGroups.length} speaker
-                    {visibleCastGroups.length === 1 ? "" : "s"}
-                    {ignoredLabels.size > 0
-                      ? ` · ${ignoredLabels.size} skipped`
-                      : ""}
-                  </Badge>
+                  <p className="text-xs text-muted-foreground">Assign a voice to a character first. Then generate audio inline or use Replace Lines for advanced editing.</p>
                 )}
               </div>
-              {speakerGroupsError ? (
-                <div className="mt-3">
-                  <ErrorBanner
-                    title="Cast detection"
-                    detail={speakerGroupsError}
-                  />
-                </div>
-              ) : null}
-              {charCreateError ? (
-                <div className="mt-3">
-                  <ErrorBanner
-                    title="Character creation"
-                    detail={charCreateError}
-                  />
-                </div>
-              ) : null}
-              {speakerGroupsLoading ? (
-                <div className="mt-4 flex items-center gap-2 text-sm text-muted">
-                  <Spinner className="h-4 w-4 border-t-canvas" />
-                  Resolving detected cast…
-                </div>
-              ) : null}
-              {!speakerGroupsLoading && speakerGroups.length === 0 ? (
-                <p className="mt-3 text-sm text-muted">
-                  No separate voices were detected. Try a clip with clearer
-                  turns, or add characters manually.
-                </p>
-              ) : null}
-              {!speakerGroupsLoading && speakerGroups.length > 0 ? (
-                <div className="mt-4 rounded-xl bg-white/[0.03] p-3 ring-1 ring-accent/20 sm:p-3">
-                  <ul className="space-y-2">
-                  {visibleCastGroups.map((g) => {
-                    const created = createdChars[g.speaker_label];
-                    const others = visibleCastGroups
-                      .filter((x) => x.speaker_label !== g.speaker_label)
-                      .map((x) => x.speaker_label);
-                    const mergePick =
-                      mergeTargetFor[g.speaker_label] ?? others[0] ?? "";
-                    return (
-                    <li
-                      key={g.speaker_label}
-                      id={speakerRowDomId(g.speaker_label)}
-                      className="scroll-mt-24 rounded-xl bg-white/[0.02] p-3 ring-1 ring-white/[0.06]"
-                    >
-                      <div className="flex flex-wrap items-start gap-2">
-                        <Mic2 className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
-                        <div className="min-w-0 flex-1">
-                          {editingLabel === g.speaker_label ? (
-                            <form
-                              className="flex flex-wrap items-center gap-2"
-                              onSubmit={(e) => {
-                                e.preventDefault();
-                                void handleRename(g.speaker_label, editValue);
+            ) : null}
+
+            {/* Frames and downloads */}
+            {mediaDone ? (
+              <Panel className="rounded-2xl border border-border bg-card p-4 shadow-soft">
+                <details open>
+                  <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-foreground [&::-webkit-details-marker]:hidden">
+                    <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform [[open]>&]:rotate-180" />
+                    Frames and downloads
+                  </summary>
+                  <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+                    {mediaDone.thumbnail_paths.map((rel, i) => (
+                      <div key={rel} className="overflow-hidden rounded-lg ring-1 ring-white/10">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={mediaUrl(rel)} alt={`Frame ${i + 1}`} className="h-20 w-full object-cover" />
+                        <div className="flex flex-col gap-0.5 border-t border-white/[0.06] bg-black/20 px-1.5 py-1">
+                          <a href={mediaUrl(rel)} download={`castweave-frame-${i + 1}.jpg`} className="text-[10px] font-medium text-accent hover:underline">Download</a>
+                          {transcriptEpisodeId && projectRoster.length > 0 ? (
+                            <select
+                              className="w-full rounded border border-white/[0.1] bg-canvas/80 px-0.5 py-0.5 text-[10px] text-foreground disabled:opacity-50"
+                              defaultValue=""
+                              disabled={avatarBusyIndex === i}
+                              onChange={(e) => {
+                                const cid = e.target.value;
+                                if (!cid || !transcriptEpisodeId) return;
+                                if (avatarBusyIndex !== null) { e.target.value = ""; return; }
+                                const selectEl = e.target;
+                                setAvatarBusyIndex(i);
+                                void (async () => {
+                                  try {
+                                    await api.setCharacterAvatarFromEpisodeThumb(cid, { episode_id: transcriptEpisodeId, thumb_index: i });
+                                    toast("Character photo updated");
+                                  } catch {
+                                    toast("Could not update character photo");
+                                  } finally {
+                                    selectEl.value = "";
+                                    setAvatarBusyIndex(null);
+                                  }
+                                })();
                               }}
                             >
-                              <input
-                                className="min-w-[10rem] flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                autoFocus
-                              />
-                              <Button type="submit" variant="secondary">
-                                Save
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={() => setEditingLabel(null)}
-                              >
-                                Cancel
-                              </Button>
-                            </form>
-                          ) : (
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                              <span className="text-sm font-medium text-text">
-                                {g.display_name}
-                              </span>
-                              {g.display_name !== g.speaker_label ? (
-                                <span className="text-[11px] text-muted">
-                                  ({g.speaker_label})
-                                </span>
-                              ) : null}
-                              {g.is_narrator ? (
-                                <Badge tone="violet">narrator</Badge>
-                              ) : null}
-                            </div>
-                          )}
-                          <p className="mt-1 text-[11px] text-muted">
-                            {g.segment_count} segments ·{" "}
-                            {g.total_speaking_duration.toFixed(1)}s
-                          </p>
-                          {g.sample_texts.length > 0 ? (
-                            <div className="mt-2 space-y-0.5">
-                              {g.sample_texts.slice(0, 3).map((t, i) => (
-                                <p
-                                  key={i}
-                                  className="line-clamp-2 text-xs italic text-muted"
-                                >
-                                  &ldquo;{t}&rdquo;
-                                </p>
-                              ))}
-                            </div>
+                              <option value="">{avatarBusyIndex === i ? "Updating..." : "Use as character photo..."}</option>
+                              {projectRoster.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                            </select>
                           ) : null}
                         </div>
                       </div>
-
-                      {created ? (
-                        <div className="mt-3 space-y-2">
-                          <div className="flex items-center gap-2 text-sm font-medium text-emerald-600 dark:text-emerald-400/95">
-                            <CheckCircle2 className="h-4 w-4 shrink-0" />
-                            Character created
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Link
-                              href={`/voice-studio?character=${encodeURIComponent(created.id)}&panel=voice&focus=attach`}
-                              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground shadow-glow transition hover:opacity-90"
-                            >
-                              <Volume2 className="h-3.5 w-3.5" />
-                              Attach voice
-                            </Link>
-                            <Link
-                              href={`/voice-studio?character=${encodeURIComponent(created.id)}&panel=voice`}
-                              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-white/[0.08] px-3 text-xs font-semibold text-text ring-1 ring-white/[0.1] transition hover:bg-white/[0.12]"
-                            >
-                              Open Voice Studio
-                            </Link>
-                            <Button
-                              variant="secondary"
-                              className="!px-2.5 !py-1.5 !text-xs"
-                              onClick={() => {
-                                setEditingLabel(g.speaker_label);
-                                setEditValue(g.display_name);
-                              }}
-                            >
-                              <Pencil className="h-3 w-3" />
-                              Rename
-                            </Button>
-                          </div>
-                        </div>
-                      ) : creatingLabel === g.speaker_label ? (
-                        <form
-                          className="mt-3 flex flex-wrap items-center gap-2"
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            void handleCreateCharacter(
-                              g.speaker_label,
-                              charNameInput,
-                            );
-                          }}
-                        >
-                          <input
-                            className="min-w-[10rem] flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-sm text-text outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/20"
-                            placeholder="Character name"
-                            value={charNameInput}
-                            onChange={(e) => setCharNameInput(e.target.value)}
-                            autoFocus
-                          />
-                          <Button
-                            type="submit"
-                            disabled={!charNameInput.trim()}
-                          >
-                            Save
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={() => setCreatingLabel(null)}
-                          >
-                            Cancel
-                          </Button>
-                        </form>
-                      ) : (
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <Button
-                            variant="secondary"
-                            className="!px-2.5 !py-1.5 !text-xs"
-                            onClick={() => {
-                              setEditingLabel(g.speaker_label);
-                              setEditValue(g.display_name);
-                            }}
-                          >
-                            <Pencil className="h-3 w-3" />
-                            Rename
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            className="!px-2.5 !py-1.5 !text-xs"
-                            onClick={() => {
-                              setCreatingLabel(g.speaker_label);
-                              setCharNameInput(
-                                g.display_name !== g.speaker_label
-                                  ? g.display_name
-                                  : "",
-                              );
-                            }}
-                          >
-                            <UserPlus className="h-3.5 w-3.5" />
-                            Create character
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            className="!px-2.5 !py-1.5 !text-xs"
-                            onClick={() => toggleIgnore(g.speaker_label)}
-                          >
-                            Skip
-                          </Button>
-                        </div>
-                      )}
-
-                      {editingLabel !== g.speaker_label ? (
-                        <details className="group mt-2 border-t border-white/[0.06] pt-2">
-                          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-medium text-muted hover:text-text [&::-webkit-details-marker]:hidden">
-                            <MoreHorizontal className="h-3.5 w-3.5" />
-                            More
-                          </summary>
-                          <div className="mt-2 flex flex-col gap-2">
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              className="w-full justify-start !px-2.5 !py-1.5 !text-xs sm:w-auto"
-                              onClick={() =>
-                                void handleNarrator(
-                                  g.speaker_label,
-                                  !g.is_narrator,
-                                )
-                              }
-                            >
-                              {g.is_narrator
-                                ? "Unmark narrator / off-screen"
-                                : "Mark narrator / off-screen"}
-                            </Button>
-                            {others.length > 0 ? (
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-[11px] text-muted">
-                                  Merge duplicate
-                                </span>
-                                <select
-                                  className="rounded-lg border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-xs text-text outline-none focus:border-accent/40"
-                                  value={mergePick}
-                                  onChange={(e) =>
-                                    setMergeTargetFor((m) => ({
-                                      ...m,
-                                      [g.speaker_label]: e.target.value,
-                                    }))
-                                  }
-                                >
-                                  {others.map((lab) => (
-                                    <option key={lab} value={lab}>
-                                      into {lab}
-                                    </option>
-                                  ))}
-                                </select>
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  className="!px-2.5 !py-1 !text-xs"
-                                  disabled={mergeBusy || !mergePick}
-                                  onClick={() =>
-                                    void runMerge(g.speaker_label, mergePick)
-                                  }
-                                >
-                                  <GitMerge className="h-3 w-3" />
-                                  Merge
-                                </Button>
-                              </div>
-                            ) : null}
-                          </div>
-                        </details>
-                      ) : null}
-                    </li>
-                    );
-                  })}
-                  </ul>
-                </div>
-              ) : null}
-              {ignoredLabels.size > 0 ? (
-                <details className="mt-3 rounded-xl bg-white/[0.02] p-3 ring-1 ring-white/[0.06]">
-                  <summary className="cursor-pointer list-none text-xs font-medium text-muted hover:text-text [&::-webkit-details-marker]:hidden">
-                    Skipped ({ignoredLabels.size})
-                  </summary>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {[...ignoredLabels].map((lab) => (
-                      <button
-                        key={lab}
-                        type="button"
-                        className="rounded-full bg-white/[0.06] px-3 py-1 text-xs font-medium text-text ring-1 ring-white/[0.08] transition hover:bg-white/[0.1]"
-                        onClick={() => toggleIgnore(lab)}
-                      >
-                        Restore {lab}
-                      </button>
                     ))}
                   </div>
+                  {transcriptEpisodeId ? (
+                    <div className="mt-3 flex flex-wrap gap-3 text-[11px] font-medium">
+                      <a href={api.episodeTranscriptExportUrl(transcriptEpisodeId, "txt")} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline"><Download className="h-3 w-3" />Transcript .txt</a>
+                      <a href={api.episodeTranscriptExportUrl(transcriptEpisodeId, "srt")} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline"><Download className="h-3 w-3" />Subtitles .srt</a>
+                      <a href={api.episodeTranscriptExportUrl(transcriptEpisodeId, "vtt")} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline"><Download className="h-3 w-3" />Subtitles .vtt</a>
+                      {activeProjectId && projectClipCount > 0 ? (
+                        <a href={api.projectClipsZipUrl(activeProjectId)} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline"><Download className="h-3 w-3" />All clips .zip ({projectClipCount})</a>
+                      ) : activeProjectId ? (
+                        <span className="text-muted-foreground">No generated clips yet</span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </details>
-              ) : null}
-              {transcriptEpisodeId && transcriptSegments.length > 0 ? (
-                <div
-                  className={`mt-4 rounded-xl px-4 py-3 ${
-                    anyCharacterHasVoice
-                      ? "border border-emerald-500/25 bg-emerald-500/5"
-                      : "border border-white/[0.08] bg-white/[0.02]"
-                  }`}
-                >
-                  {anyCharacterHasVoice ? (
-                    <>
-                      <p className="text-sm font-medium text-foreground">
-                        Voices are on the roster. You can swap lines in Replace
-                        Lines when you&apos;re ready.
-                      </p>
-                      <Link
-                        href={`/replace-lines?episode=${encodeURIComponent(transcriptEpisodeId)}`}
-                        className="mt-2 inline-flex text-sm font-semibold text-accent underline-offset-4 hover:underline"
-                      >
-                        Open Replace Lines
-                      </Link>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-sm text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          Replace Lines
-                        </span>{" "}
-                        works best after at least one character has a voice in
-                        Voice Studio. Finish cast setup above first.
-                      </p>
-                      <Link
-                        href={`/replace-lines?episode=${encodeURIComponent(transcriptEpisodeId)}`}
-                        className="mt-2 inline-flex text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                      >
-                        Open Replace Lines anyway
-                      </Link>
-                    </>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-        </Panel>
-
-          <div className="rounded-2xl border border-border bg-gradient-warm p-5">
-            <div className="flex items-start gap-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-accent-foreground">
-                <Wand2 className="h-3.5 w-3.5" />
-              </span>
-              <div>
-                <div className="font-display text-sm font-semibold text-foreground">
-                  Cleaner audio, better speakers
-                </div>
-                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                  Use a clip with one speaker per line and minimal background music for best diarization. Ten minutes is plenty.
-                </p>
-              </div>
-            </div>
-          </div>
+              </Panel>
+            ) : null}
+          </main>
         </div>
-      </div>
+      ) : null}
 
-      <footer className="mt-16 border-t border-border pt-6 text-center text-[11px] text-muted-foreground">
+      <footer className="mt-10 border-t border-border pt-4 text-center text-[11px] text-muted-foreground">
         CastWeave · Video to cast, voice, and lines.
       </footer>
+
+      {sourceVoiceModalChar ? (
+        <SourceVoiceModal
+          characterName={sourceVoiceModalChar.name}
+          busy={sourceVoiceBusy}
+          onConfirm={handleEnableSourceVoice}
+          onCancel={() => setSourceVoiceModalChar(null)}
+        />
+      ) : null}
+
+      <ConfirmModal
+        open={!!confirmDeleteSegId}
+        title="Remove transcript line"
+        confirmLabel="Remove"
+        danger
+        onConfirm={() => void executeDeleteSegment()}
+        onCancel={() => setConfirmDeleteSegId(null)}
+      >
+        <p>Remove this line from the transcript? It will be hidden from exports and generation.</p>
+      </ConfirmModal>
     </div>
   );
 }

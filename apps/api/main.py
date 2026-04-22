@@ -142,6 +142,8 @@ async def lifespan(_app: FastAPI):
         "Azure VI env key presence (no values): %s",
         azure_vi_config.azure_config_presence_summary(),
     )
+    from db.store import store as _store
+    _store.renormalize_hindi_display_text()
     yield
 
 

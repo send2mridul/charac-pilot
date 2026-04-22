@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -21,6 +22,11 @@ from services.job_timing import (
 )
 from services.asr_whisper import transcribe_wav_to_records
 from services.diarize import assign_speaker_labels
+from services.transcript_text_normalize import (
+    apply_transcript_language_policy,
+    drop_obvious_hindi_junk_segments,
+    normalize_video_indexer_language,
+)
 from services.ffmpeg_bin import get_ffmpeg_paths
 from storage_paths import STORAGE_ROOT, to_rel_storage_path
 
@@ -287,8 +293,13 @@ def _run_episode_media_pipeline(
     t_segments: list = []
     import_provider = "local"
     fallback_reason: str | None = None
+    asr_diag: dict = {}
 
     local_first_lim = local_first_max_duration_sec()
+    prefer_local_hindi = (
+        os.environ.get("CASTWEAVE_HINDI_PREFER_LOCAL", "").strip().lower()
+        in ("1", "true", "yes")
+    )
     skip_remote = (
         local_first_lim is not None
         and duration is not None
@@ -307,6 +318,19 @@ def _run_episode_media_pipeline(
             "episode_media job_id=%s %s",
             job_id,
             azure_vi_config.startup_log_line(),
+        )
+    elif prefer_local_hindi:
+        fallback_reason = (
+            "Using on-device analysis because CASTWEAVE_HINDI_PREFER_LOCAL is set."
+        )
+        logger.info(
+            "castweave_hindi step=prefer_local_env job_id=%s skip_remote=true",
+            job_id,
+        )
+        store.update_job(
+            job_id,
+            progress=0.52,
+            message="Using on-device analysis for better Hindi quality…",
         )
     elif skip_remote:
         fallback_reason = (
@@ -426,7 +450,7 @@ def _run_episode_media_pipeline(
         timer.mark("local_transcribe_start")
         _enforce_deadline("before_local_transcribe")
         try:
-            language, t_segments = transcribe_wav_to_records(wav_abs, episode_id)
+            language, t_segments, asr_diag = transcribe_wav_to_records(wav_abs, episode_id)
         except Exception as e:
             logger.exception("transcription failed episode_id=%s", episode_id)
             raise RuntimeError(
@@ -436,11 +460,14 @@ def _run_episode_media_pipeline(
         timer.mark("local_transcribe_done")
         _enforce_deadline("after_local_transcribe")
         logger.info(
-            "transcription model done job_id=%s episode_id=%s segments=%s language=%s",
+            "transcription model done job_id=%s episode_id=%s segments=%s language=%s coverage=%.3f low=%s retry=%s",
             job_id,
             episode_id,
             len(t_segments),
             language,
+            float(asr_diag.get("coverage_ratio") or 0),
+            bool(asr_diag.get("low_coverage")),
+            bool(asr_diag.get("retry_triggered")),
         )
 
         store.update_job(
@@ -476,11 +503,22 @@ def _run_episode_media_pipeline(
         timer.mark("persist_start")
         _enforce_deadline("before_persist")
         t_persist0 = time.perf_counter()
+        language = normalize_video_indexer_language(language)
+        logger.info(
+            "episode_media job_id=%s episode_id=%s normalized_language=%s import_provider=%s",
+            job_id,
+            episode_id,
+            language,
+            import_provider,
+        )
+        t_segments = apply_transcript_language_policy(language, t_segments)
+        t_segments = drop_obvious_hindi_junk_segments(language, t_segments)
         store.set_transcript_for_episode(episode_id, t_segments, language=language)
         logger.info(
-            "episode_media job_id=%s transcript rows=%s",
+            "episode_media job_id=%s transcript rows=%s language=%s",
             job_id,
             len(t_segments),
+            language,
         )
         job_timing_add_phase(job_id, "persist", time.perf_counter() - t_persist0)
 
@@ -510,6 +548,8 @@ def _run_episode_media_pipeline(
             "speaker_count": speaker_count,
             "import_provider": import_provider,
             "fallback_reason": fallback_reason,
+            "transcript_coverage_low": bool(asr_diag.get("low_coverage")),
+            "transcript_coverage_ratio": float(asr_diag.get("coverage_ratio") or 0.0),
         }
         done = store.update_job(
             job_id,

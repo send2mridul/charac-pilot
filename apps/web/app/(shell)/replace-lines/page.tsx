@@ -22,6 +22,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import Link from "next/link";
 import { Panel } from "@/components/ui/Panel";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Spinner } from "@/components/ui/Spinner";
 
 function formatTime(sec: number): string {
@@ -61,6 +62,7 @@ function ReplaceLinesContent() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingRepId, setEditingRepId] = useState<string | null>(null);
+  const [confirmDeleteRep, setConfirmDeleteRep] = useState<ReplacementDto | null>(null);
 
   useEffect(() => {
     const e = searchParams.get("episode");
@@ -80,7 +82,14 @@ function ReplaceLinesContent() {
     api
       .listEpisodes(activeProjectId)
       .then((rows) => {
-        if (!c) setEpisodes(rows);
+        if (!c) {
+          setEpisodes(rows);
+          if (!episodeId && rows.length > 0) {
+            const fromUrl = searchParams.get("episode");
+            const match = fromUrl ? rows.find((e) => e.id === fromUrl) : null;
+            setEpisodeId(match ? match.id : rows[0]!.id);
+          }
+        }
       })
       .catch(() => {
         if (!c) setEpisodes([]);
@@ -91,7 +100,7 @@ function ReplaceLinesContent() {
     return () => {
       c = true;
     };
-  }, [activeProjectId]);
+  }, [activeProjectId, episodeId, searchParams]);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -103,7 +112,14 @@ function ReplaceLinesContent() {
     api
       .listCharacters(activeProjectId)
       .then((rows) => {
-        if (!c) setCharacters(rows);
+        if (!c) {
+          setCharacters(rows);
+          if (!characterId) {
+            const voiced = rows.find((ch) => ch.default_voice_id);
+            if (voiced) setCharacterId(voiced.id);
+            else if (rows.length > 0) setCharacterId(rows[0]!.id);
+          }
+        }
       })
       .catch(() => {
         if (!c) setCharacters([]);
@@ -114,7 +130,7 @@ function ReplaceLinesContent() {
     return () => {
       c = true;
     };
-  }, [activeProjectId]);
+  }, [activeProjectId, characterId]);
 
   const loadSegments = useCallback(async (eid: string) => {
     setSegLoading(true);
@@ -166,9 +182,11 @@ function ReplaceLinesContent() {
   }, [selectedSegId, segments, editingRepId]);
 
   async function handleGenerate() {
-    if (!episodeId || !selectedSegId || !characterId || !replacementText.trim()) {
-      return;
-    }
+    if (generating) return;
+    if (!episodeId) { setError("Select an episode first."); return; }
+    if (!selectedSegId) { setError("Select a transcript segment first."); return; }
+    if (!characterId) { setError("Choose a character to speak this line."); return; }
+    if (!replacementText.trim()) { setError("Enter replacement text."); return; }
     if (!selectedChar?.default_voice_id) {
       setError("This character has no assigned voice. Set one in Voice Studio first.");
       return;
@@ -212,9 +230,15 @@ function ReplaceLinesContent() {
     }
   }
 
-  async function handleDelete(rep: ReplacementDto) {
+  function handleDelete(rep: ReplacementDto) {
     if (!episodeId) return;
-    if (!globalThis.confirm("Delete this replacement?")) return;
+    setConfirmDeleteRep(rep);
+  }
+
+  async function executeDeleteRep() {
+    const rep = confirmDeleteRep;
+    if (!episodeId || !rep) return;
+    setConfirmDeleteRep(null);
     setError(null);
     try {
       await api.deleteEpisodeReplacement(episodeId, rep.replacement_id);
@@ -513,8 +537,13 @@ function ReplaceLinesContent() {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-xs font-mono text-muted">
-                        Segment {r.segment_id.slice(0, 12)}… · {r.character_name}
+                        {r.character_name}
                       </p>
+                      {r.original_text ? (
+                        <p className="mt-0.5 text-[11px] italic text-muted">
+                          Original: {r.original_text.length > 80 ? r.original_text.slice(0, 80) + "..." : r.original_text}
+                        </p>
+                      ) : null}
                       <p className="mt-1 text-sm text-text">
                         &ldquo;{r.replacement_text}&rdquo;
                       </p>
@@ -557,6 +586,17 @@ function ReplaceLinesContent() {
           )}
         </Panel>
       ) : null}
+
+      <ConfirmModal
+        open={!!confirmDeleteRep}
+        title="Delete replacement"
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => void executeDeleteRep()}
+        onCancel={() => setConfirmDeleteRep(null)}
+      >
+        <p>Delete this replacement? The generated audio will be removed.</p>
+      </ConfirmModal>
     </div>
   );
 }

@@ -45,6 +45,12 @@ class TranscriptSegmentRecord:
     end_time: float
     text: str
     speaker_label: str | None
+    """Source-script transcript (e.g. Devanagari Hindi) when display is romanized."""
+    text_original: str | None = None
+    """Optional English gloss; not used as default UI transcript."""
+    text_translation_en: str | None = None
+    """Soft-delete flag: 1 = hidden from UI/exports/batch, 0 = active."""
+    deleted: int = 0
 
 
 @dataclass
@@ -101,6 +107,11 @@ class CharacterRecord:
     voice_source_type: str | None = None
     voice_parent_id: str | None = None
     voice_description_meta: str | None = None
+    source_matched_voice_enabled: bool = False
+    source_matched_rights_confirmed: bool = False
+    source_matched_rights_type: str | None = None
+    source_matched_proof_note: str | None = None
+    source_matched_voice_id: str | None = None
 
 
 @dataclass

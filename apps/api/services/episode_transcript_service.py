@@ -12,6 +12,8 @@ def _to_segment_out(r: TranscriptSegmentRecord) -> TranscriptSegmentOut:
         end_time=r.end_time,
         text=r.text,
         speaker_label=r.speaker_label,
+        text_original=r.text_original,
+        text_translation_en=r.text_translation_en,
     )
 
 

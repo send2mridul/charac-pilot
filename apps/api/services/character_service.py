@@ -158,6 +158,11 @@ def clear_character_voice(character_id: str) -> CharacterOut | None:
         preview_audio_path=None,
         voice_source_type=None,
         voice_parent_id=None,
+        source_matched_voice_enabled=False,
+        source_matched_rights_confirmed=False,
+        source_matched_rights_type=None,
+        source_matched_proof_note=None,
+        source_matched_voice_id=None,
     )
 
 
@@ -185,4 +190,9 @@ def _to_out(c: CharacterRecord) -> CharacterOut:
         voice_source_type=c.voice_source_type,
         voice_parent_id=c.voice_parent_id,
         voice_description_meta=c.voice_description_meta,
+        source_matched_voice_enabled=c.source_matched_voice_enabled,
+        source_matched_rights_confirmed=c.source_matched_rights_confirmed,
+        source_matched_rights_type=c.source_matched_rights_type,
+        source_matched_proof_note=c.source_matched_proof_note,
+        source_matched_voice_id=c.source_matched_voice_id,
     )

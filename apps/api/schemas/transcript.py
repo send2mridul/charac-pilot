@@ -8,9 +8,13 @@ class TranscriptSegmentOut(BaseModel):
     end_time: float
     text: str
     speaker_label: str | None = None
+    """Source script (e.g. Devanagari) when `text` is romanized for display."""
+    text_original: str | None = None
+    text_translation_en: str | None = None
 
 
 class TranscriptOut(BaseModel):
     episode_id: str
+    """BCP-47 style short code (e.g. en, hi). Same as spoken content language."""
     language: str | None = None
     segments: list[TranscriptSegmentOut]

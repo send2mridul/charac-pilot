@@ -15,6 +15,7 @@ import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { useProjects } from "@/components/providers/ProjectProvider";
 import { Button } from "@/components/ui/Button";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -91,6 +92,7 @@ export default function ProjectsPage() {
   );
   const [openMenuProjectId, setOpenMenuProjectId] = useState<string | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (projects.length === 0) {
@@ -157,18 +159,17 @@ export default function ProjectsPage() {
     }
   }
 
-  async function onDeleteProject(projectId: string, projectName: string) {
-    if (
-      !globalThis.confirm(
-        `Delete “${projectName}” and all of its characters, episodes, and metadata on this machine?`,
-      )
-    ) {
-      return;
-    }
-    setDeletingProjectId(projectId);
+  function requestDeleteProject(projectId: string, projectName: string) {
     setOpenMenuProjectId(null);
+    setConfirmDelete({ id: projectId, name: projectName });
+  }
+
+  async function executeDeleteProject() {
+    if (!confirmDelete) return;
+    setDeletingProjectId(confirmDelete.id);
     try {
-      await api.deleteProject(projectId);
+      await api.deleteProject(confirmDelete.id);
+      setConfirmDelete(null);
       await refresh();
       router.push("/projects");
     } catch (e) {
@@ -177,6 +178,7 @@ export default function ProjectsPage() {
       setDeletingProjectId(null);
     }
   }
+
 
   const activeCount = projects.filter((p) => p.status === "active").length;
 
@@ -388,7 +390,7 @@ export default function ProjectsPage() {
                               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-500/10 disabled:opacity-50"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                void onDeleteProject(p.id, p.name);
+                                requestDeleteProject(p.id, p.name);
                               }}
                             >
                               {deletingProjectId === p.id ? (
@@ -462,6 +464,22 @@ export default function ProjectsPage() {
       <footer className="mt-16 border-t border-border pt-6 text-center text-[11px] text-muted-foreground">
         CastWeave · Video to cast, voice, and lines.
       </footer>
+
+      <ConfirmModal
+        open={!!confirmDelete}
+        title="Delete project"
+        confirmLabel="Delete project"
+        cancelLabel="Cancel"
+        danger
+        busy={!!deletingProjectId}
+        onConfirm={() => void executeDeleteProject()}
+        onCancel={() => setConfirmDelete(null)}
+      >
+        <p>
+          Delete <strong>{confirmDelete?.name}</strong> and all of its characters,
+          episodes, and metadata on this machine? This cannot be undone.
+        </p>
+      </ConfirmModal>
     </div>
   );
 }

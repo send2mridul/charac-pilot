@@ -257,6 +257,19 @@ export const api = {
   ): string =>
     `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/transcript/export.${format}`,
 
+  segmentSourceAudioUrl: (episodeId: string, segmentId: string): string =>
+    `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/segments/${encodeURIComponent(segmentId)}/audio`,
+
+  deleteTranscriptSegment: async (episodeId: string, segmentId: string): Promise<void> => {
+    const res = await fetch(
+      `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/segments/${encodeURIComponent(segmentId)}`,
+      { method: "DELETE", cache: "no-store" },
+    );
+    if (res.ok || res.status === 204) return;
+    const text = await res.text();
+    throw new ApiError(`API ${res.status} for DELETE segment`, res.status, text);
+  },
+
   deleteEpisode: async (episodeId: string) => {
     const res = await fetch(
       `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}`,
@@ -281,6 +294,19 @@ export const api = {
     requestJson<CharacterDto>(
       `/characters/${encodeURIComponent(characterId)}/clear-voice`,
       { method: "POST", headers: { Accept: "application/json" } },
+    ),
+
+  enableSourceMatchedVoice: (
+    characterId: string,
+    body: { rights_type: string; proof_note?: string },
+  ) =>
+    requestJson<CharacterDto>(
+      `/characters/${encodeURIComponent(characterId)}/enable-source-voice`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+      },
     ),
 
   setCharacterAvatarFromEpisodeThumb: (
@@ -490,6 +516,9 @@ export const api = {
 
   characterClipsZipUrl: (characterId: string) =>
     `${getPublicApiBaseUrl()}/characters/${encodeURIComponent(characterId)}/clips/download-all`,
+
+  projectClipsZipUrl: (projectId: string) =>
+    `${getPublicApiBaseUrl()}/projects/${encodeURIComponent(projectId)}/clips/download-all`,
 
   listVoiceCatalog: (params?: { page?: number; page_size?: number }) => {
     const sp = new URLSearchParams();

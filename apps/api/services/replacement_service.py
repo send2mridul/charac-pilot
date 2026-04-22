@@ -10,7 +10,8 @@ from db.store import ReplacementRecord, TranscriptSegmentRecord, _now_iso, store
 from schemas.replacement import PatchReplacementBody, ReplacementOut
 from services import episode_service
 from storage_paths import STORAGE_ROOT, to_rel_storage_path
-from services.tts_service import synthesize_line_to_file
+from services.tts_service import elevenlabs_language_code, synthesize_line_to_file
+from services.transcript_text_normalize import synthesis_text_for_replacement
 
 log = logging.getLogger("characpilot.replacement")
 
@@ -93,11 +94,23 @@ def create_replacement(
     out_base = REPL_ROOT / episode_id / segment_id / replacement_id
 
     text = replacement_text.strip()
+    lang_code = elevenlabs_language_code(ep.transcript_language)
+    synth_text = synthesis_text_for_replacement(ep.transcript_language, seg, text)
+    log.info(
+        "create_replacement episode=%s segment=%s lang=%s lang_code=%s text_len=%d synth_len=%d",
+        episode_id,
+        segment_id,
+        ep.transcript_language,
+        lang_code,
+        len(text),
+        len(synth_text),
+    )
     _duration_ms, provider, fallback, final_path = synthesize_line_to_file(
-        text,
+        synth_text,
         voice_id,
         tone_style,
         out_base,
+        language_code=lang_code,
     )
 
     rel = to_rel_storage_path(final_path)
@@ -182,11 +195,22 @@ def patch_replacement(
     if regen:
         _unlink_audio(existing.generated_audio_path)
         out_base = REPL_ROOT / episode_id / existing.segment_id / replacement_id
-        _duration_ms, provider, fallback, final_path = synthesize_line_to_file(
+        ep_row = store.get_episode(episode_id)
+        seg_row = _find_segment(episode_id, existing.segment_id)
+        lang_code = elevenlabs_language_code(
+            ep_row.transcript_language if ep_row else None,
+        )
+        synth = synthesis_text_for_replacement(
+            ep_row.transcript_language if ep_row else None,
+            seg_row,
             new_text,
+        )
+        _duration_ms, provider, fallback, final_path = synthesize_line_to_file(
+            synth,
             ch.default_voice_id,
             new_tone,
             out_base,
+            language_code=lang_code,
         )
         rel = to_rel_storage_path(final_path)
         updated = store.update_replacement(

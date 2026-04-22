@@ -154,7 +154,9 @@ def poll_video_indexer_status(
     )
     token = access_token if access_token is not None else get_video_indexer_access_token()
     url = f"{_base_url()}/Videos/{video_id}/Index"
-    params = {"accessToken": token, "language": "English"}
+    # Do not pass language=English: that returns English translations instead of
+    # source-language transcript (e.g. Hindi clips would show English text).
+    params = {"accessToken": token}
     deadline = cfg.poll_timeout_sec()
     interval = cfg.poll_interval_sec()
     start = time.time()

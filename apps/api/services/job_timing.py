@@ -57,7 +57,7 @@ def job_timing_discard(job_id: str) -> None:
 
 
 def job_timing_log_summary(job_id: str) -> None:
-    """One scan-friendly line; removes stored state for this job_id."""
+    """One scan-friendly line with per-stage breakdown; removes stored state for this job_id."""
     with _lock:
         data = _state.pop(job_id, None)
     if not data:
@@ -78,7 +78,7 @@ def job_timing_log_summary(job_id: str) -> None:
     fallback = p("fallback")
 
     logger.info(
-        "[characpilot] JOB TIMING SUMMARY job_id=%s total=%.2fs upload=%.2fs "
+        "JOB TIMING SUMMARY job_id=%s total=%.2fs upload=%.2fs "
         "extract=%.2fs thumbnails=%.2fs analysis=%.2fs mapping=%.2fs grouping=%.2fs "
         "persist=%.2fs fallback=%.2fs",
         job_id,
@@ -91,4 +91,13 @@ def job_timing_log_summary(job_id: str) -> None:
         grouping,
         persist,
         fallback,
+    )
+
+    overhead = max(0.0, total - upload - extract - thumbnails - analysis - mapping - grouping - persist - fallback)
+    logger.info(
+        "JOB TIMING BREAKDOWN job_id=%s | upload %.1fs | extract %.1fs | "
+        "thumbnails %.1fs | analysis %.1fs | mapping %.1fs | grouping %.1fs | "
+        "persist %.1fs | fallback %.1fs | overhead %.1fs | TOTAL %.1fs",
+        job_id, upload, extract, thumbnails, analysis, mapping, grouping,
+        persist, fallback, overhead, total,
     )

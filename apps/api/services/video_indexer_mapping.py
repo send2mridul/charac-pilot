@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 from db.records import TranscriptSegmentRecord
+from services.transcript_text_normalize import normalize_video_indexer_language
 
 logger = logging.getLogger(__name__)
 
@@ -139,4 +140,4 @@ def map_video_indexer_results_to_castweave_entities(
         len(records),
         episode_id,
     )
-    return language, records
+    return normalize_video_indexer_language(language), records

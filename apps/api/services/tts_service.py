@@ -57,11 +57,23 @@ def _generate_silent_wav(path: Path, duration_sec: float = 2.0) -> int:
     return int(duration_sec * 1000)
 
 
+def elevenlabs_language_code(transcript_lang: str | None) -> str | None:
+    """Optional ElevenLabs `language_code` for multilingual TTS (e.g. Hindi)."""
+    if not transcript_lang or not str(transcript_lang).strip():
+        return None
+    base = str(transcript_lang).strip().lower().split("-", 1)[0]
+    if base == "hi":
+        return "hi"
+    return None
+
+
 def _generate_elevenlabs(
     text: str,
     voice_id: str | None,
     style: str | None,
     out_path: Path,
+    *,
+    language_code: str | None = None,
 ) -> int:
     """Call ElevenLabs TTS API; returns duration_ms. Raises on failure."""
     import urllib.request
@@ -75,7 +87,7 @@ def _generate_elevenlabs(
     vid = _resolve_elevenlabs_voice_id(voice_id)
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}"
     model_id = os.environ.get("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2"
-    payload = _json.dumps({
+    body: dict = {
         "text": text,
         "model_id": model_id,
         "voice_settings": {
@@ -84,7 +96,10 @@ def _generate_elevenlabs(
             "style": 0.0,
             "use_speaker_boost": True,
         },
-    }).encode()
+    }
+    if language_code:
+        body["language_code"] = language_code
+    payload = _json.dumps(body).encode()
 
     req = urllib.request.Request(
         url,
@@ -128,7 +143,9 @@ def generate_preview(
         ext = "mp3"
         out_path = char_dir / f"{preview_id}.{ext}"
         try:
-            duration_ms = _generate_elevenlabs(text, voice_id, style, out_path)
+            duration_ms = _generate_elevenlabs(
+                text, voice_id, style, out_path, language_code=None,
+            )
             provider = "primary"
             log.info("elevenlabs preview ok id=%s dur=%dms", preview_id, duration_ms)
         except Exception as e:
@@ -163,6 +180,8 @@ def synthesize_line_to_file(
     voice_id: str | None,
     style: str | None,
     out_base_no_ext: Path,
+    *,
+    language_code: str | None = None,
 ) -> tuple[int, str, bool, Path]:
     """Write TTS to disk. Returns (duration_ms, provider, fallback_used, final_path)."""
     key = _elevenlabs_key()
@@ -171,7 +190,13 @@ def synthesize_line_to_file(
     if key:
         out_mp3 = out_base_no_ext.with_suffix(".mp3")
         try:
-            duration_ms = _generate_elevenlabs(text, voice_id, style, out_mp3)
+            duration_ms = _generate_elevenlabs(
+                text,
+                voice_id,
+                style,
+                out_mp3,
+                language_code=language_code,
+            )
             log.info(
                 "synthesize_line_to_file elevenlabs path=%s dur_ms=%s",
                 out_mp3,

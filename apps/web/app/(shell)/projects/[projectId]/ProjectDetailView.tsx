@@ -22,6 +22,7 @@ import {
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { buttonClass } from "@/components/ui/buttonStyles";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Panel } from "@/components/ui/Panel";
@@ -63,6 +64,8 @@ export function ProjectDetailView({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [confirmRemoveEp, setConfirmRemoveEp] = useState<EpisodeDto | null>(null);
+  const [confirmDeleteProject, setConfirmDeleteProject] = useState(false);
 
   useEffect(() => {
     return () => stopVoicePreview();
@@ -185,14 +188,14 @@ export function ProjectDetailView({
     }
   }
 
-  async function removeEpisodeImport(ep: EpisodeDto) {
-    if (
-      !globalThis.confirm(
-        `Remove this import (“${ep.title}”) from the project? Its transcript and detected cast data will be deleted from this machine.`,
-      )
-    ) {
-      return;
-    }
+  function removeEpisodeImport(ep: EpisodeDto) {
+    setConfirmRemoveEp(ep);
+  }
+
+  async function executeRemoveEpisodeImport() {
+    const ep = confirmRemoveEp;
+    if (!ep) return;
+    setConfirmRemoveEp(null);
     setErr(null);
     try {
       await api.deleteEpisode(ep.id);
@@ -203,14 +206,12 @@ export function ProjectDetailView({
     }
   }
 
-  async function removeProject() {
-    if (
-      !globalThis.confirm(
-        "Delete this project and all of its characters, episodes, and metadata on this machine?",
-      )
-    ) {
-      return;
-    }
+  function removeProject() {
+    setConfirmDeleteProject(true);
+  }
+
+  async function executeRemoveProject() {
+    setConfirmDeleteProject(false);
     setDeleting(true);
     setErr(null);
     try {
@@ -567,7 +568,12 @@ export function ProjectDetailView({
               >
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-text">{r.character_name}</p>
-                  <p className="mt-1 line-clamp-2 text-xs text-muted">
+                  {r.original_text ? (
+                    <p className="mt-0.5 line-clamp-1 text-[11px] italic text-muted">
+                      Original: {r.original_text}
+                    </p>
+                  ) : null}
+                  <p className="mt-0.5 line-clamp-2 text-xs text-foreground">
                     {r.replacement_text}
                   </p>
                 </div>
@@ -659,6 +665,35 @@ export function ProjectDetailView({
           </ul>
         )}
       </Panel>
+
+      <ConfirmModal
+        open={!!confirmRemoveEp}
+        title="Remove import"
+        confirmLabel="Remove"
+        danger
+        onConfirm={() => void executeRemoveEpisodeImport()}
+        onCancel={() => setConfirmRemoveEp(null)}
+      >
+        <p>
+          Remove &ldquo;{confirmRemoveEp?.title}&rdquo; from the project? Its
+          transcript and detected cast data will be deleted from this machine.
+        </p>
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={confirmDeleteProject}
+        title="Delete project"
+        confirmLabel="Delete"
+        danger
+        busy={deleting}
+        onConfirm={() => void executeRemoveProject()}
+        onCancel={() => setConfirmDeleteProject(false)}
+      >
+        <p>
+          Delete this project and all of its characters, episodes, and metadata
+          on this machine?
+        </p>
+      </ConfirmModal>
     </div>
   );
 }

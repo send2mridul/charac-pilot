@@ -3,6 +3,7 @@ uvicorn[standard]>=0.32.0
 pydantic>=2.10.0
 python-multipart>=0.0.12
 faster-whisper>=1.1.0
+indic-transliteration>=2.3.0
 librosa>=0.10.0
 scikit-learn>=1.4.0
 soundfile>=0.12.0

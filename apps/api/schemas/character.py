@@ -31,6 +31,11 @@ class CharacterOut(BaseModel):
     voice_source_type: str | None = None
     voice_parent_id: str | None = None
     voice_description_meta: str | None = None
+    source_matched_voice_enabled: bool = False
+    source_matched_rights_confirmed: bool = False
+    source_matched_rights_type: str | None = None
+    source_matched_proof_note: str | None = None
+    source_matched_voice_id: str | None = None
 
     model_config = {"populate_by_name": True}
 

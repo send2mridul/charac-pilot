@@ -41,10 +41,15 @@ export type CharacterDto = {
   voice_display_name: string | null;
   voice_style_presets: Record<string, unknown> | null;
   preview_audio_path: string | null;
-  /** catalog | designed | remixed when set */
+  /** catalog | designed | remixed | source_matched when set */
   voice_source_type?: string | null;
   voice_parent_id?: string | null;
   voice_description_meta?: string | null;
+  source_matched_voice_enabled?: boolean;
+  source_matched_rights_confirmed?: boolean;
+  source_matched_rights_type?: string | null;
+  source_matched_proof_note?: string | null;
+  source_matched_voice_id?: string | null;
 };
 
 export type VoiceCatalogItem = {
@@ -200,6 +205,10 @@ export type EpisodeMediaJobResult = {
   import_provider?: string;
   /** When analysis used the on-device path, short neutral note (e.g. why cloud analysis was not used). */
   fallback_reason?: string | null;
+  /** True when local transcription coverage was below the sanity threshold. */
+  transcript_coverage_low?: boolean;
+  /** Coverage ratio (sum of segment durations / wav duration), 0..1. */
+  transcript_coverage_ratio?: number;
 };
 
 export type TranscriptSegmentDto = {
@@ -207,8 +216,11 @@ export type TranscriptSegmentDto = {
   episode_id: string;
   start_time: number;
   end_time: number;
+  /** Romanized or English transcript for UI (never Devanagari as default). */
   text: string;
   speaker_label: string | null;
+  text_original?: string | null;
+  text_translation_en?: string | null;
 };
 
 export type TranscriptDto = {

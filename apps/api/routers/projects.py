@@ -1,8 +1,11 @@
+import io
 import logging
 import time
+import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile
+from fastapi.responses import StreamingResponse
 
 from schemas.character import (
     CharacterOut,
@@ -23,6 +26,7 @@ from services import (
 )
 from services.voice_clip_service import list_for_project
 from services.episode_media_worker import schedule_episode_processing
+from storage_paths import STORAGE_ROOT as _STORAGE_ROOT
 from services.job_timing import (
     job_timing_ensure_start,
     job_timing_set_upload_save_sec,
@@ -67,6 +71,35 @@ def list_project_clips(project_id: str):
     if not project_service.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return list_for_project(project_id)
+
+
+@router.get("/{project_id}/clips/download-all")
+def download_project_clips_zip(project_id: str):
+    if not project_service.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    from db.store import store
+    rows = store.list_voice_clips_for_project(project_id)
+    if not rows:
+        raise HTTPException(status_code=404, detail="No clips for this project yet")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, rec in enumerate(rows):
+            path = _STORAGE_ROOT / rec.audio_path
+            if not path.is_file():
+                continue
+            safe = "".join(
+                ch if ch.isalnum() or ch in "._- " else "_" for ch in (rec.title or rec.id)
+            ).strip()[:48] or rec.id
+            ext = path.suffix or ".wav"
+            zf.write(path, arcname=f"{i + 1:03d}_{safe}{ext}")
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="castweave-clips-{project_id}.zip"',
+        },
+    )
 
 
 @router.get("/{project_id}/replacements", response_model=list[ReplacementOut])

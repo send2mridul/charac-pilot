@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import threading
 import uuid
@@ -247,6 +248,168 @@ class SqliteStore:
             except sqlite3.OperationalError:
                 pass
 
+        cur = self._cx.execute("PRAGMA table_info(transcript_segments)")
+        tcols = {row[1] for row in cur.fetchall()}
+        for col_name, col_typ in (
+            ("text_original", "TEXT"),
+            ("text_translation_en", "TEXT"),
+            ("deleted", "INTEGER DEFAULT 0"),
+        ):
+            if col_name not in tcols:
+                try:
+                    self._cx.execute(
+                        f"ALTER TABLE transcript_segments ADD COLUMN {col_name} {col_typ}",
+                    )
+                    self._cx.commit()
+                except sqlite3.OperationalError:
+                    pass
+
+        cur = self._cx.execute("PRAGMA table_info(characters)")
+        ccols = {row[1] for row in cur.fetchall()}
+        for col_name, col_typ, col_default in (
+            ("source_matched_voice_enabled", "INTEGER", "0"),
+            ("source_matched_rights_confirmed", "INTEGER", "0"),
+            ("source_matched_rights_type", "TEXT", None),
+            ("source_matched_proof_note", "TEXT", None),
+            ("source_matched_voice_id", "TEXT", None),
+        ):
+            if col_name not in ccols:
+                try:
+                    dflt = f" DEFAULT {col_default}" if col_default is not None else ""
+                    self._cx.execute(
+                        f"ALTER TABLE characters ADD COLUMN {col_name} {col_typ}{dflt}",
+                    )
+                    self._cx.commit()
+                except sqlite3.OperationalError:
+                    pass
+
+    def renormalize_hindi_display_text(self) -> None:
+        """Re-derive display text for Hindi segments that have text_original.
+
+        Fixes stale data from earlier code that over-aggressively replaced lines
+        with placeholders or stripped transliterated content to punctuation-only.
+        Runs once at startup; handles both DB-tracked and disk-only transcripts.
+        """
+        from services.transcript_text_normalize import (
+            finalize_segment_fields,
+            is_hindi_language,
+            normalize_video_indexer_language,
+            HINDI_PLACEHOLDER_DISPLAY,
+        )
+
+        _STALE_ARTIFACT_RE = re.compile(r"[a-z]\s+\d\s+[a-z]")
+
+        def _needs_fix(cur_text: str) -> bool:
+            s = cur_text.strip()
+            if s == HINDI_PLACEHOLDER_DISPLAY:
+                return True
+            has_latin = any("A" <= c <= "Z" or "a" <= c <= "z" for c in s)
+            if not has_latin or (has_latin and len(s) < 4):
+                return True
+            if _STALE_ARTIFACT_RE.search(s):
+                return True
+            return False
+
+        # --- Part 1: DB-tracked Hindi episodes ---
+        with self._lock:
+            hi_eps = self._cx.execute(
+                "SELECT id, transcript_language FROM episodes WHERE transcript_language IS NOT NULL"
+            ).fetchall()
+
+        hindi_episode_ids: list[tuple[str, str | None]] = []
+        for r in hi_eps:
+            lang = normalize_video_indexer_language(r["transcript_language"])
+            if is_hindi_language(lang):
+                hindi_episode_ids.append((r["id"], lang))
+
+        total_fixed = 0
+        for ep_id, lang in hindi_episode_ids:
+            with self._lock:
+                rows = self._cx.execute(
+                    "SELECT segment_id, text, text_original FROM transcript_segments WHERE episode_id = ?",
+                    (ep_id,),
+                ).fetchall()
+
+            updates: list[tuple[str, str, str]] = []
+            for row in rows:
+                orig = row["text_original"]
+                if not orig:
+                    continue
+                if not _needs_fix(row["text"] or ""):
+                    continue
+                new_disp, _, _ = finalize_segment_fields(episode_language=lang, raw_text=orig)
+                if new_disp and new_disp != HINDI_PLACEHOLDER_DISPLAY and new_disp != (row["text"] or "").strip():
+                    updates.append((new_disp, orig, row["segment_id"]))
+
+            if not updates:
+                continue
+
+            with self._lock:
+                for new_text, _orig, seg_id in updates:
+                    self._cx.execute(
+                        "UPDATE transcript_segments SET text = ? WHERE segment_id = ?",
+                        (new_text, seg_id),
+                    )
+                self._cx.commit()
+            total_fixed += len(updates)
+
+            all_segs = self.list_transcript_segments(ep_id, include_deleted=True)
+            self._persist_transcript_json(ep_id, all_segs, lang)
+
+        # --- Part 2: disk-only transcript.json files not in DB ---
+        disk_fixed = 0
+        if UPLOADS_ROOT.is_dir():
+            for proj_dir in sorted(UPLOADS_ROOT.iterdir()):
+                if not proj_dir.is_dir():
+                    continue
+                for ep_dir in sorted(proj_dir.iterdir()):
+                    if not ep_dir.is_dir():
+                        continue
+                    tpath = ep_dir / "transcript.json"
+                    if not tpath.is_file():
+                        continue
+                    ep_id = ep_dir.name
+                    with self._lock:
+                        in_db = self._cx.execute(
+                            "SELECT 1 FROM episodes WHERE id = ?", (ep_id,)
+                        ).fetchone()
+                    if in_db:
+                        continue
+                    try:
+                        payload = json.loads(tpath.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                    lang = normalize_video_indexer_language(payload.get("language"))
+                    if not is_hindi_language(lang):
+                        continue
+                    segs = payload.get("segments", [])
+                    changed = False
+                    for seg in segs:
+                        orig = seg.get("text_original")
+                        if not orig:
+                            continue
+                        if not _needs_fix(seg.get("text", "")):
+                            continue
+                        new_disp, _, _ = finalize_segment_fields(episode_language=lang, raw_text=orig)
+                        if new_disp and new_disp != HINDI_PLACEHOLDER_DISPLAY:
+                            seg["text"] = new_disp
+                            changed = True
+                            disk_fixed += 1
+                    if changed:
+                        try:
+                            tpath.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+                        except OSError:
+                            pass
+
+        total_fixed += disk_fixed
+        if total_fixed:
+            log.info(
+                "hindi_renormalize: fixed %d stale display segments (db=%d disk=%d)",
+                total_fixed,
+                total_fixed - disk_fixed,
+                disk_fixed,
+            )
+
     def _row_project(self, r: sqlite3.Row) -> ProjectRecord:
         desc = ""
         try:
@@ -303,9 +466,35 @@ class SqliteStore:
             voice_source_type=r["voice_source_type"],
             voice_parent_id=r["voice_parent_id"],
             voice_description_meta=r["voice_description_meta"],
+            source_matched_voice_enabled=bool(r["source_matched_voice_enabled"] if "source_matched_voice_enabled" in r.keys() else 0),
+            source_matched_rights_confirmed=bool(r["source_matched_rights_confirmed"] if "source_matched_rights_confirmed" in r.keys() else 0),
+            source_matched_rights_type=r["source_matched_rights_type"] if "source_matched_rights_type" in r.keys() else None,
+            source_matched_proof_note=r["source_matched_proof_note"] if "source_matched_proof_note" in r.keys() else None,
+            source_matched_voice_id=r["source_matched_voice_id"] if "source_matched_voice_id" in r.keys() else None,
         )
 
     def _row_segment(self, r: sqlite3.Row) -> TranscriptSegmentRecord:
+        def _col_str(key: str) -> str | None:
+            try:
+                v = r[key]
+            except (KeyError, IndexError):
+                return None
+            if v is None:
+                return None
+            return str(v)
+
+        def _col_int(key: str) -> int:
+            try:
+                v = r[key]
+            except (KeyError, IndexError):
+                return 0
+            if v is None:
+                return 0
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return 0
+
         return TranscriptSegmentRecord(
             segment_id=r["segment_id"],
             episode_id=r["episode_id"],
@@ -313,6 +502,9 @@ class SqliteStore:
             end_time=float(r["end_time"]),
             text=r["text"],
             speaker_label=r["speaker_label"],
+            text_original=_col_str("text_original"),
+            text_translation_en=_col_str("text_translation_en"),
+            deleted=_col_int("deleted"),
         )
 
     def _row_speaker_group(self, r: sqlite3.Row) -> SpeakerGroupRecord:
@@ -624,8 +816,10 @@ class SqliteStore:
               source_speaker_labels_json, source_episode_id, segment_count, total_speaking_duration,
               sample_texts_json, thumbnail_paths_json, is_narrator,
               default_voice_id, voice_provider, voice_display_name, voice_style_presets_json,
-              preview_audio_path, voice_source_type, voice_parent_id, voice_description_meta
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              preview_audio_path, voice_source_type, voice_parent_id, voice_description_meta,
+              source_matched_voice_enabled, source_matched_rights_confirmed,
+              source_matched_rights_type, source_matched_proof_note, source_matched_voice_id
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 rec.id,
                 rec.project_id,
@@ -649,6 +843,11 @@ class SqliteStore:
                 rec.voice_source_type,
                 rec.voice_parent_id,
                 rec.voice_description_meta,
+                1 if rec.source_matched_voice_enabled else 0,
+                1 if rec.source_matched_rights_confirmed else 0,
+                rec.source_matched_rights_type,
+                rec.source_matched_proof_note,
+                rec.source_matched_voice_id,
             ),
         )
 
@@ -677,6 +876,11 @@ class SqliteStore:
             voice_source_type=fields.get("voice_source_type"),
             voice_parent_id=fields.get("voice_parent_id"),
             voice_description_meta=fields.get("voice_description_meta"),
+            source_matched_voice_enabled=fields.get("source_matched_voice_enabled", False),
+            source_matched_rights_confirmed=fields.get("source_matched_rights_confirmed", False),
+            source_matched_rights_type=fields.get("source_matched_rights_type"),
+            source_matched_proof_note=fields.get("source_matched_proof_note"),
+            source_matched_voice_id=fields.get("source_matched_voice_id"),
         )
         with self._lock:
             self._insert_character(rec)
@@ -773,8 +977,9 @@ class SqliteStore:
         for s in segments:
             self._cx.execute(
                 """INSERT INTO transcript_segments
-                   (segment_id, episode_id, start_time, end_time, text, speaker_label)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   (segment_id, episode_id, start_time, end_time, text, speaker_label,
+                    text_original, text_translation_en, deleted)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     s.segment_id,
                     s.episode_id,
@@ -782,6 +987,9 @@ class SqliteStore:
                     s.end_time,
                     s.text,
                     s.speaker_label,
+                    s.text_original,
+                    s.text_translation_en,
+                    int(getattr(s, "deleted", 0) or 0),
                 ),
             )
 
@@ -947,22 +1155,43 @@ class SqliteStore:
             self._cx.commit()
         return rep
 
-    def _load_segments_db(self, episode_id: str) -> list[TranscriptSegmentRecord]:
-        cur = self._cx.execute(
-            """SELECT * FROM transcript_segments WHERE episode_id = ?
-               ORDER BY start_time, segment_id""",
-            (episode_id,),
-        )
+    def _load_segments_db(self, episode_id: str, *, include_deleted: bool = False) -> list[TranscriptSegmentRecord]:
+        if include_deleted:
+            sql = "SELECT * FROM transcript_segments WHERE episode_id = ? ORDER BY start_time, segment_id"
+        else:
+            sql = "SELECT * FROM transcript_segments WHERE episode_id = ? AND COALESCE(deleted, 0) = 0 ORDER BY start_time, segment_id"
+        cur = self._cx.execute(sql, (episode_id,))
         return [self._row_segment(r) for r in cur.fetchall()]
 
-    def list_transcript_segments(self, episode_id: str) -> list[TranscriptSegmentRecord]:
+    def soft_delete_segment(self, episode_id: str, segment_id: str) -> bool:
         with self._lock:
-            cached = self._load_segments_db(episode_id)
+            cur = self._cx.execute(
+                "UPDATE transcript_segments SET deleted = 1 WHERE episode_id = ? AND segment_id = ?",
+                (episode_id, segment_id),
+            )
+            self._cx.commit()
+            changed = cur.rowcount > 0
+        if changed:
+            try:
+                ep = self.get_episode(episode_id)
+                lang = ep.transcript_language if ep else None
+                all_segs = self.list_transcript_segments(episode_id, include_deleted=True)
+                self._persist_transcript_json(episode_id, all_segs, lang)
+            except Exception:
+                log.warning(
+                    "soft_delete_segment: failed to persist transcript.json episode_id=%s",
+                    episode_id,
+                )
+        return changed
+
+    def list_transcript_segments(self, episode_id: str, *, include_deleted: bool = False) -> list[TranscriptSegmentRecord]:
+        with self._lock:
+            cached = self._load_segments_db(episode_id, include_deleted=include_deleted)
         if cached:
             return cached
         self.hydrate_transcript_from_disk(episode_id)
         with self._lock:
-            return self._load_segments_db(episode_id)
+            return self._load_segments_db(episode_id, include_deleted=include_deleted)
 
     def build_speaker_groups(self, episode_id: str) -> list[SpeakerGroupRecord]:
         segs = self.list_transcript_segments(episode_id)
@@ -1075,6 +1304,8 @@ class SqliteStore:
                     end_time=s.end_time,
                     text=s.text,
                     speaker_label=lab,
+                    text_original=s.text_original,
+                    text_translation_en=s.text_translation_en,
                 )
             )
         ep = self.get_episode(episode_id)
@@ -1198,6 +1429,9 @@ class SqliteStore:
                         end_time=float(item["end_time"]),
                         text=str(item["text"]),
                         speaker_label=item.get("speaker_label"),
+                        text_original=item.get("text_original"),
+                        text_translation_en=item.get("text_translation_en"),
+                        deleted=int(item.get("deleted", 0) or 0),
                     )
                 )
             except (KeyError, TypeError, ValueError):
@@ -1254,6 +1488,9 @@ class SqliteStore:
                     "end_time": s.end_time,
                     "text": s.text,
                     "speaker_label": s.speaker_label,
+                    "text_original": s.text_original,
+                    "text_translation_en": s.text_translation_en,
+                    "deleted": int(getattr(s, "deleted", 0) or 0),
                 }
                 for s in segments
             ],

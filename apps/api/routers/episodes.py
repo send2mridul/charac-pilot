@@ -1,7 +1,9 @@
 import logging
+import subprocess
+import tempfile
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from db.store import store
 from schemas.character import CharacterOut, CreateCharacterFromGroupBody
@@ -142,6 +144,61 @@ def list_episode_transcript_segments(episode_id: str):
     rows = episode_transcript_service.list_segments(eid)
     log.info("GET /episodes/%s/segments -> 200 count=%s", eid, len(rows))
     return rows
+
+
+@router.delete("/{episode_id}/segments/{segment_id}", status_code=204)
+def delete_transcript_segment(episode_id: str, segment_id: str):
+    """Soft-delete a transcript segment (hides from exports and UI)."""
+    eid = _episode_id(episode_id)
+    sid = segment_id.strip()
+    log.info("DELETE /episodes/%s/segments/%s", eid, sid)
+    ok = store.soft_delete_segment(eid, sid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+
+@router.get("/{episode_id}/segments/{segment_id}/audio")
+def get_segment_source_audio(episode_id: str, segment_id: str):
+    """Extract and serve a short WAV clip of the source audio for one transcript segment."""
+    from storage_paths import STORAGE_ROOT
+    eid = _episode_id(episode_id)
+    sid = segment_id.strip()
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    ep = episode_service.get_episode(eid)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    segs = store.list_transcript_segments(eid, include_deleted=True)
+    seg = next((s for s in segs if s.segment_id == sid), None)
+    if not seg:
+        raise HTTPException(status_code=404, detail="Segment not found")
+    audio_rel = ep.extracted_audio_rel
+    if not audio_rel:
+        raise HTTPException(status_code=404, detail="No extracted audio available")
+    audio_path = STORAGE_ROOT / audio_rel
+    if not audio_path.is_file():
+        raise HTTPException(status_code=404, detail="Audio file missing")
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp.close()
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", str(audio_path),
+                "-ss", f"{seg.start_time:.3f}",
+                "-to", f"{seg.end_time:.3f}",
+                "-ac", "1", "-ar", "22050",
+                tmp.name,
+            ],
+            capture_output=True, timeout=15, check=True,
+        )
+    except Exception as e:
+        log.warning("segment audio extract failed: %s", e)
+        raise HTTPException(status_code=500, detail="Could not extract segment audio") from e
+    return FileResponse(
+        tmp.name,
+        media_type="audio/wav",
+        filename=f"source_{sid}.wav",
+    )
 
 
 @router.get("/{episode_id}/speaker-groups", response_model=list[SpeakerGroupOut])

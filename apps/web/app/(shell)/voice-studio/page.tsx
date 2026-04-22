@@ -39,6 +39,7 @@ import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Panel } from "@/components/ui/Panel";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Spinner } from "@/components/ui/Spinner";
 
 type StudioSection = "voice" | "draft" | "clips";
@@ -126,6 +127,7 @@ function VoiceStudioContent() {
   const [clipsLoading, setClipsLoading] = useState(false);
   const [clipLabel, setClipLabel] = useState("");
   const [clipBusyId, setClipBusyId] = useState<string | null>(null);
+  const [confirmDeleteClipId, setConfirmDeleteClipId] = useState<string | null>(null);
   const [directInputMode, setDirectInputMode] =
     useState<DirectInputMode>("single_line");
   const [directLinesInput, setDirectLinesInput] = useState("");
@@ -338,6 +340,7 @@ function VoiceStudioContent() {
   }, [selectedId]);
 
   async function handleAssignVoice() {
+    if (saving) return;
     if (!selected || !chosenVoiceId || !voiceHub) return;
     setSaving(true);
     setError(null);
@@ -526,8 +529,14 @@ function VoiceStudioContent() {
     }
   }
 
-  async function handleDeleteClip(clipId: string) {
-    if (!globalThis.confirm("Delete this clip from your library?")) return;
+  function handleDeleteClip(clipId: string) {
+    setConfirmDeleteClipId(clipId);
+  }
+
+  async function executeDeleteClip() {
+    const clipId = confirmDeleteClipId;
+    if (!clipId) return;
+    setConfirmDeleteClipId(null);
     setClipBusyId(clipId);
     try {
       await api.deleteVoiceClip(clipId);
@@ -563,7 +572,11 @@ function VoiceStudioContent() {
     }
   }
 
-  const rows = voiceHub?.voices ?? [];
+  const allVoices = voiceHub?.voices ?? [];
+  const projectVoiceIds = new Set(characters.filter((c) => c.default_voice_id).map((c) => c.default_voice_id!));
+  const projectVoices = allVoices.filter((v) => projectVoiceIds.has(v.voice_id));
+  const createdVoices = allVoices.filter((v) => !projectVoiceIds.has(v.voice_id) && (v.category === "cloned" || v.category === "generated"));
+  const catalogVoices = allVoices.filter((v) => !projectVoiceIds.has(v.voice_id) && v.category !== "cloned" && v.category !== "generated");
 
   const remixEligible =
     !!selected?.default_voice_id &&
@@ -577,6 +590,7 @@ function VoiceStudioContent() {
   }
 
   async function handleDesignGenerate() {
+    if (designLoading) return;
     if (!selected || !designDesc.trim()) return;
     setDesignLoading(true);
     setDesignErr(null);
@@ -599,6 +613,7 @@ function VoiceStudioContent() {
   }
 
   async function handleDesignSave() {
+    if (designSaveLoading) return;
     if (!selected || !designPickGid || !designVoiceName.trim()) return;
     setDesignSaveLoading(true);
     setDesignErr(null);
@@ -625,6 +640,7 @@ function VoiceStudioContent() {
   }
 
   async function handleRemixGenerate() {
+    if (remixLoading) return;
     if (!selected?.default_voice_id || !remixPrompt.trim()) return;
     setRemixLoading(true);
     setRemixErr(null);
@@ -647,6 +663,7 @@ function VoiceStudioContent() {
   }
 
   async function handleRemixSave() {
+    if (remixSaveLoading) return;
     if (
       !selected?.default_voice_id ||
       !remixPickGid ||
@@ -1019,34 +1036,65 @@ function VoiceStudioContent() {
                         onChange={(e) => setVoiceSearchInput(e.target.value)}
                       />
                     </div>
-                    <div className="mt-3 max-h-[260px] space-y-1.5 overflow-y-auto rounded-lg border border-white/[0.08]">
+                    <div className="mt-3 max-h-[320px] space-y-0 overflow-y-auto rounded-lg border border-white/[0.08]">
                       {catalogLoading ? (
-                        <p className="px-3 py-2 text-xs text-muted">Loading voices…</p>
+                        <p className="px-3 py-2 text-xs text-muted">Loading voices...</p>
                       ) : null}
                       {catalogError ? (
                         <p className="px-3 py-2 text-xs text-red-300">{catalogError}</p>
                       ) : null}
-                      {(rows || []).map((v) => {
-                        const active = chosenVoiceId === v.voice_id;
-                        return (
-                          <button
-                            key={v.voice_id}
-                            type="button"
-                            className={`w-full border-b border-white/[0.05] px-3 py-2.5 text-left text-sm last:border-b-0 ${
-                              active ? "bg-accent/12" : "hover:bg-white/[0.03]"
-                            }`}
-                            onClick={() => setChosenVoiceId(v.voice_id)}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-medium text-text">{v.display_name}</span>
-                              {active ? <Badge tone="accent">Selected</Badge> : null}
-                            </div>
-                            {v.description ? (
-                              <p className="line-clamp-2 text-[11px] text-muted">{v.description}</p>
-                            ) : null}
-                          </button>
-                        );
-                      })}
+                      {projectVoices.length > 0 ? (
+                        <>
+                          <div className="sticky top-0 z-10 border-b border-white/[0.08] bg-card/95 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-accent backdrop-blur">Project voices</div>
+                          {projectVoices.map((v) => {
+                            const active = chosenVoiceId === v.voice_id;
+                            const charName = characters.find((c) => c.default_voice_id === v.voice_id)?.name;
+                            return (
+                              <button key={v.voice_id} type="button" className={`w-full border-b border-white/[0.05] px-3 py-2.5 text-left text-sm last:border-b-0 ${active ? "bg-accent/12" : "hover:bg-white/[0.03]"}`} onClick={() => setChosenVoiceId(v.voice_id)}>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-medium text-text">{v.display_name}</span>
+                                  <span className="flex items-center gap-1">{charName ? <Badge tone="default">{charName}</Badge> : null}{active ? <Badge tone="accent">Selected</Badge> : null}</span>
+                                </div>
+                                {v.description ? <p className="line-clamp-1 text-[11px] text-muted">{v.description}</p> : null}
+                              </button>
+                            );
+                          })}
+                        </>
+                      ) : null}
+                      {createdVoices.length > 0 ? (
+                        <>
+                          <div className="sticky top-0 z-10 border-b border-white/[0.08] bg-card/95 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400 backdrop-blur">My created voices</div>
+                          {createdVoices.map((v) => {
+                            const active = chosenVoiceId === v.voice_id;
+                            return (
+                              <button key={v.voice_id} type="button" className={`w-full border-b border-white/[0.05] px-3 py-2.5 text-left text-sm last:border-b-0 ${active ? "bg-accent/12" : "hover:bg-white/[0.03]"}`} onClick={() => setChosenVoiceId(v.voice_id)}>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-medium text-text">{v.display_name}</span>
+                                  {active ? <Badge tone="accent">Selected</Badge> : null}
+                                </div>
+                                {v.description ? <p className="line-clamp-1 text-[11px] text-muted">{v.description}</p> : null}
+                              </button>
+                            );
+                          })}
+                        </>
+                      ) : null}
+                      {catalogVoices.length > 0 ? (
+                        <>
+                          <div className="sticky top-0 z-10 border-b border-white/[0.08] bg-card/95 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted backdrop-blur">Catalog voices</div>
+                          {catalogVoices.map((v) => {
+                            const active = chosenVoiceId === v.voice_id;
+                            return (
+                              <button key={v.voice_id} type="button" className={`w-full border-b border-white/[0.05] px-3 py-2.5 text-left text-sm last:border-b-0 ${active ? "bg-accent/12" : "hover:bg-white/[0.03]"}`} onClick={() => setChosenVoiceId(v.voice_id)}>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-medium text-text">{v.display_name}</span>
+                                  {active ? <Badge tone="accent">Selected</Badge> : null}
+                                </div>
+                                {v.description ? <p className="line-clamp-2 text-[11px] text-muted">{v.description}</p> : null}
+                              </button>
+                            );
+                          })}
+                        </>
+                      ) : null}
                     </div>
                     <Button
                       className="mt-3 w-full"
@@ -1445,6 +1493,18 @@ function VoiceStudioContent() {
           )}
         </div>
       )}
+
+      <ConfirmModal
+        open={!!confirmDeleteClipId}
+        title="Delete clip"
+        confirmLabel="Delete clip"
+        danger
+        busy={clipBusyId === confirmDeleteClipId}
+        onConfirm={() => void executeDeleteClip()}
+        onCancel={() => setConfirmDeleteClipId(null)}
+      >
+        <p>Delete this clip from your library?</p>
+      </ConfirmModal>
     </div>
   );
 }

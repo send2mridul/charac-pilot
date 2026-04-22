@@ -424,6 +424,32 @@ def avatar_from_episode_thumbnail(character_id: str, body: AvatarFromEpisodeThum
     return updated
 
 
+class EnableSourceMatchedVoiceBody(BaseModel):
+    rights_type: str = Field(..., min_length=1)
+    proof_note: str = ""
+
+
+@router.post("/{character_id}/enable-source-voice", response_model=CharacterOut)
+def enable_source_matched_voice_endpoint(character_id: str, body: EnableSourceMatchedVoiceBody):
+    """Enable source-matched voice for a character after rights confirmation."""
+    log.info("POST /characters/%s/enable-source-voice rights_type=%s", character_id, body.rights_type)
+    from services.source_voice_service import enable_source_matched_voice
+    try:
+        return enable_source_matched_voice(
+            character_id,
+            rights_type=body.rights_type.strip(),
+            proof_note=(body.proof_note or "").strip(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        log.exception("enable-source-voice failed character_id=%s", character_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not set up source-matched voice right now. Please try again.",
+        ) from e
+
+
 @router.post("/{character_id}/clear-voice", response_model=CharacterOut)
 def clear_attached_voice(character_id: str):
     updated = character_service.clear_character_voice(character_id)
