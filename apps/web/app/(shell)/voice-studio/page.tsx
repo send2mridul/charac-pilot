@@ -1,15 +1,19 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
+  ChevronDown,
   Download,
   LayoutGrid,
   Library,
   Mic2,
+  Plus,
   Search,
   Sparkles,
   Trash2,
+  Upload,
   Volume2,
   Wand2,
 } from "lucide-react";
@@ -29,6 +33,7 @@ import { useToast } from "@/components/providers/ToastProvider";
 import { playVoicePreview, stopVoicePreview } from "@/lib/audio/voicePreviewPlayer";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { buttonClass } from "@/components/ui/buttonStyles";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -67,7 +72,13 @@ function initials(name: string): string {
 
 function VoiceStudioContent() {
   const toast = useToast();
-  const { activeProjectId } = useProjects();
+  const router = useRouter();
+  const {
+    projects,
+    activeProjectId,
+    setActiveProjectId,
+    loading: projectsLoading,
+  } = useProjects();
   const searchParams = useSearchParams();
   const [characters, setCharacters] = useState<CharacterDto[]>([]);
   const [loading, setLoading] = useState(false);
@@ -137,6 +148,32 @@ function VoiceStudioContent() {
     const q = searchParams.get("character");
     if (q?.trim()) setSelectedId(q.trim());
   }, [searchParams]);
+
+  useEffect(() => {
+    if (loading || projectsLoading) return;
+    if (!activeProjectId) {
+      setSelectedId(null);
+      return;
+    }
+    if (characters.length === 0) {
+      setSelectedId(null);
+      return;
+    }
+    const q = searchParams.get("character")?.trim();
+    if (q && characters.some((c) => c.id === q)) {
+      setSelectedId(q);
+      return;
+    }
+    if (q) {
+      setSelectedId(characters[0]!.id);
+      return;
+    }
+    setSelectedId((current) =>
+      current && characters.some((c) => c.id === current)
+        ? current
+        : characters[0]!.id,
+    );
+  }, [loading, projectsLoading, activeProjectId, characters, searchParams]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -533,6 +570,12 @@ function VoiceStudioContent() {
     (selected.voice_source_type === "designed" ||
       selected.voice_source_type === "remixed");
 
+  function handleVoiceStudioProjectChange(id: string) {
+    if (!id || id === activeProjectId) return;
+    setActiveProjectId(id);
+    router.replace("/voice-studio");
+  }
+
   async function handleDesignGenerate() {
     if (!selected || !designDesc.trim()) return;
     setDesignLoading(true);
@@ -639,12 +682,42 @@ function VoiceStudioContent() {
     <div className="space-y-8">
       <PageHeader title="Voice Studio" subtitle={pageSubtitle} />
 
+      <Panel className="border border-white/[0.08] bg-white/[0.04] shadow-[0_8px_24px_-18px_rgba(0,0,0,0.28)]">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Project
+          </span>
+          <div className="relative">
+            <select
+              className="flex cursor-pointer appearance-none items-center gap-2 rounded-lg border border-white/[0.12] bg-canvas/80 py-2 pl-3 pr-9 text-sm font-semibold text-text outline-none transition-colors hover:border-accent/40 focus:border-accent/40"
+              value={activeProjectId ?? ""}
+              disabled={projectsLoading || projects.length === 0}
+              onChange={(e) => handleVoiceStudioProjectChange(e.target.value)}
+            >
+              {projects.length === 0 ? (
+                <option value="">No projects</option>
+              ) : (
+                projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))
+              )}
+            </select>
+            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted">
+              <ChevronDown className="h-3.5 w-3.5" />
+            </span>
+          </div>
+        </div>
+      </Panel>
+
       {error ? <ErrorBanner title="Voice studio" detail={error} /> : null}
 
       {focusAttach &&
       selected &&
       !selected.default_voice_id &&
       !loading &&
+      !projectsLoading &&
       characters.length > 0 ? (
         <Panel className="border border-accent/35 bg-accent/5">
           <p className="text-sm font-semibold text-text">
@@ -657,7 +730,21 @@ function VoiceStudioContent() {
         </Panel>
       ) : null}
 
-      {loading ? (
+      {projectsLoading ? (
+        <div className="grid gap-5 lg:grid-cols-2">
+          {[0, 1, 2, 3].map((i) => (
+            <Panel key={i}>
+              <Skeleton className="h-24 w-full" />
+            </Panel>
+          ))}
+        </div>
+      ) : !activeProjectId ? (
+        <EmptyState
+          icon={Mic2}
+          title="Pick a project"
+          description="Create a project first, then choose it in the Project menu above."
+        />
+      ) : loading ? (
         <div className="grid gap-5 lg:grid-cols-2">
           {[0, 1, 2, 3].map((i) => (
             <Panel key={i}>
@@ -668,8 +755,32 @@ function VoiceStudioContent() {
       ) : characters.length === 0 ? (
         <EmptyState
           icon={Mic2}
-          title="No characters in this project"
-          description="Add characters on the Characters page, or use Import from Video to create them from speakers."
+          title="No characters in this project yet"
+          description="Add a character manually or import a video to create characters from detected speakers."
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Link
+                href="/characters"
+                className={buttonClass(
+                  "primary",
+                  "min-h-10 px-5 shadow-[0_1px_0_0_rgba(255,255,255,0.2)_inset]",
+                )}
+              >
+                <Plus className="h-4 w-4" />
+                Add character
+              </Link>
+              <Link
+                href="/upload-match"
+                className={buttonClass(
+                  "secondary",
+                  "min-h-10 border border-white/[0.12] bg-white/[0.04] px-5 text-text ring-white/[0.08] hover:bg-white/[0.07]",
+                )}
+              >
+                <Upload className="h-4 w-4" />
+                Import from Video
+              </Link>
+            </div>
+          }
         />
       ) : (
         <div className="space-y-6">
