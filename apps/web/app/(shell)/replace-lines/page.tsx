@@ -13,6 +13,7 @@ import type {
   TranscriptSegmentDto,
 } from "@/lib/api/types";
 import { useProjects } from "@/components/providers/ProjectProvider";
+import { useToast } from "@/components/providers/ToastProvider";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -31,6 +32,7 @@ function formatTime(sec: number): string {
 }
 
 function ReplaceLinesContent() {
+  const toast = useToast();
   const {
     projects,
     activeProjectId,
@@ -200,6 +202,7 @@ function ReplaceLinesContent() {
         );
         setReplacements((prev) => [created, ...prev]);
       }
+      toast("Replacement saved");
     } catch (e) {
       setError(
         e instanceof ApiError ? e.message : "Could not generate replacement",

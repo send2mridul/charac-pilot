@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class EpisodeOut(BaseModel):
@@ -8,6 +8,10 @@ class EpisodeOut(BaseModel):
     status: str
     segment_count: int
     updated_at: str
+    source_video_path: str | None = None
+    extracted_audio_path: str | None = None
+    thumbnail_paths: list[str] = Field(default_factory=list)
+    duration_sec: float | None = None
 
 
 class EpisodeUploadBody(BaseModel):

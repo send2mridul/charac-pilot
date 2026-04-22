@@ -12,8 +12,15 @@ from schemas.character import (
 from services.character_avatar import save_character_avatar_file
 from schemas.episode import EpisodeCreateResult, EpisodeOut
 from schemas.project import ProjectCreate, ProjectOut, ProjectPatch
+from schemas.replacement import ReplacementOut
 from schemas.voice_clip import VoiceClipOut
-from services import character_service, episode_service, job_service, project_service
+from services import (
+    character_service,
+    episode_service,
+    job_service,
+    project_service,
+    replacement_service,
+)
 from services.voice_clip_service import list_for_project
 from services.episode_media_worker import schedule_episode_processing
 from services.job_timing import (
@@ -60,6 +67,13 @@ def list_project_clips(project_id: str):
     if not project_service.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return list_for_project(project_id)
+
+
+@router.get("/{project_id}/replacements", response_model=list[ReplacementOut])
+def list_project_replacements(project_id: str):
+    if not project_service.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return replacement_service.list_replacements_for_project(project_id)
 
 
 @router.get("/{project_id}/episodes", response_model=list[EpisodeOut])

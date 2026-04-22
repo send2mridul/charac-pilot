@@ -25,6 +25,8 @@ import type {
   VoiceClipDto,
 } from "@/lib/api/types";
 import { useProjects } from "@/components/providers/ProjectProvider";
+import { useToast } from "@/components/providers/ToastProvider";
+import { playVoicePreview, stopVoicePreview } from "@/lib/audio/voicePreviewPlayer";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -64,6 +66,7 @@ function initials(name: string): string {
 }
 
 function VoiceStudioContent() {
+  const toast = useToast();
   const { activeProjectId } = useProjects();
   const searchParams = useSearchParams();
   const [characters, setCharacters] = useState<CharacterDto[]>([]);
@@ -123,9 +126,12 @@ function VoiceStudioContent() {
   const [activeStep, setActiveStep] = useState<ActiveStep>("summary");
   const [freshClipIds, setFreshClipIds] = useState<Set<string>>(new Set());
   const [playingVoice, setPlayingVoice] = useState(false);
-  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const reviewSectionRef = useRef<HTMLDivElement | null>(null);
   const clipsSectionRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    return () => stopVoicePreview();
+  }, []);
 
   useEffect(() => {
     const q = searchParams.get("character");
@@ -312,6 +318,7 @@ function VoiceStudioContent() {
         prev.map((c) => (c.id === updated.id ? updated : c)),
       );
       setSaveSuccess(true);
+      toast("Voice attached");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to assign voice");
     } finally {
@@ -368,6 +375,7 @@ function VoiceStudioContent() {
       }
       if (directInputMode === "multi_line") setDirectLinesInput("");
       else setSampleText("");
+      toast("Clips saved to this character");
     } catch (e) {
       setPreviewError(
         e instanceof ApiError ? e.message : "Direct clip generation failed",
@@ -498,26 +506,19 @@ function VoiceStudioContent() {
     try {
       const existingPreview = (selected.preview_audio_path || "").trim();
       if (existingPreview) {
-        if (previewAudioRef.current) previewAudioRef.current.pause();
         const rel = existingPreview.replace(/^\/media\//, "");
-        const audio = new Audio(mediaUrl(rel));
-        previewAudioRef.current = audio;
-        await audio.play();
+        await playVoicePreview(mediaUrl(rel));
         return;
       }
 
-      const text =
-        selected.sample_texts.find((line) => line.trim()) ||
-        `Hello, this is ${selected.name}.`;
       const result = await api.generatePreview(selected.id, {
-        text,
+        text: "This is a short preview of the attached voice.",
         voice_id: selected.default_voice_id,
         save_clip: false,
       });
-      if (previewAudioRef.current) previewAudioRef.current.pause();
-      const audio = new Audio(mediaUrl(result.audio_url.replace(/^\/media\//, "")));
-      previewAudioRef.current = audio;
-      await audio.play();
+      await playVoicePreview(
+        mediaUrl(result.audio_url.replace(/^\/media\//, "")),
+      );
     } catch {
       /* Keep button behavior resilient */
     } finally {
@@ -570,6 +571,7 @@ function VoiceStudioContent() {
         prev.map((c) => (c.id === fresh.id ? fresh : c)),
       );
       setSaveSuccess(true);
+      toast("Designed voice saved");
     } catch (e) {
       setDesignErr(
         e instanceof ApiError ? e.message : "Could not save designed voice",
@@ -623,6 +625,7 @@ function VoiceStudioContent() {
         prev.map((c) => (c.id === fresh.id ? fresh : c)),
       );
       setSaveSuccess(true);
+      toast("Voice updated");
     } catch (e) {
       setRemixErr(
         e instanceof ApiError ? e.message : "Could not save remixed voice",
@@ -649,7 +652,7 @@ function VoiceStudioContent() {
           </p>
           <p className="mt-1 text-xs text-muted">
             This character is selected. Scroll to Voice setup, choose a voice,
-            and save—then you can generate clips or head to Replace Lines.
+            and save, then you can generate clips or head to Replace Lines.
           </p>
         </Panel>
       ) : null}

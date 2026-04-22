@@ -1,4 +1,11 @@
-from . import character_service, episode_service, episode_transcript_service, job_service, project_service
+from . import (
+    character_service,
+    episode_service,
+    episode_transcript_service,
+    job_service,
+    project_service,
+    replacement_service,
+)
 
 __all__ = [
     "character_service",
@@ -6,4 +13,5 @@ __all__ = [
     "episode_transcript_service",
     "job_service",
     "project_service",
+    "replacement_service",
 ]

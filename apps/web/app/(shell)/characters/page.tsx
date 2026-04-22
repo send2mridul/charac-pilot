@@ -24,6 +24,8 @@ import { mediaUrl } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
 import type { CharacterDto, EpisodeDto } from "@/lib/api/types";
 import { useProjects } from "@/components/providers/ProjectProvider";
+import { useToast } from "@/components/providers/ToastProvider";
+import { playVoicePreview, stopVoicePreview } from "@/lib/audio/voicePreviewPlayer";
 import { VoiceWave } from "@/components/characters/VoiceWave";
 import { Button } from "@/components/ui/Button";
 import { buttonClass } from "@/components/ui/buttonStyles";
@@ -62,6 +64,7 @@ function voiceStatus(
 }
 
 export default function CharactersPage() {
+  const toast = useToast();
   const {
     projects,
     activeProjectId,
@@ -84,11 +87,17 @@ export default function CharactersPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editErr, setEditErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const [avatarUploading, setAvatarUploading] = useState<string | null>(null);
   const [avatarTargetId, setAvatarTargetId] = useState<string | null>(null);
-  const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
+  const [voicePreviewPlayingId, setVoicePreviewPlayingId] = useState<
+    string | null
+  >(null);
   const [episodes, setEpisodes] = useState<EpisodeDto[]>([]);
+
+  useEffect(() => {
+    return () => stopVoicePreview();
+  }, []);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -158,6 +167,7 @@ export default function CharactersPage() {
       setNewName("");
       setNewRole("");
       setNewNotes("");
+      toast("Character created");
     } catch (err) {
       setCreateErr(
         err instanceof ApiError ? err.message : "Could not create character",
@@ -209,6 +219,7 @@ export default function CharactersPage() {
       setCharacters((prev) =>
         prev.map((x) => (x.id === updated.id ? updated : x)),
       );
+      toast("Voice removed");
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -232,6 +243,7 @@ export default function CharactersPage() {
         prev.map((c) => (c.id === updated.id ? updated : c)),
       );
       setEditId(null);
+      toast("Character updated");
     } catch (err) {
       setEditErr(
         err instanceof ApiError ? err.message : "Could not save character",
@@ -253,6 +265,7 @@ export default function CharactersPage() {
       setCharacters((prev) =>
         prev.map((c) => (c.id === updated.id ? updated : c)),
       );
+      toast("Character photo updated");
     } catch {
       /* optional toast */
     } finally {
@@ -264,40 +277,40 @@ export default function CharactersPage() {
 
   async function playCurrentVoice(character: CharacterDto) {
     if (!character.default_voice_id) return;
-    setPreviewingVoiceId(character.id);
+    setPreviewLoadingId(character.id);
     try {
       const existingPreview = (character.preview_audio_path || "").trim();
       if (existingPreview) {
-        if (previewAudioRef.current) {
-          previewAudioRef.current.pause();
-        }
         const rel = existingPreview.replace(/^\/media\//, "");
-        const audio = new Audio(mediaUrl(rel));
-        previewAudioRef.current = audio;
-        await audio.play();
+        await playVoicePreview(mediaUrl(rel), {
+          onPlay: () => setVoicePreviewPlayingId(character.id),
+          onEnd: () =>
+            setVoicePreviewPlayingId((id) =>
+              id === character.id ? null : id,
+            ),
+        });
         return;
       }
 
-      const text =
-        character.sample_texts.find((line) => line.trim()) ||
-        `Hello, this is ${character.name}.`;
       const preview = await api.generatePreview(character.id, {
-        text,
+        text: "This is a short preview of the attached voice.",
         voice_id: character.default_voice_id,
         save_clip: false,
       });
-      if (previewAudioRef.current) {
-        previewAudioRef.current.pause();
-      }
-      const audio = new Audio(
+      await playVoicePreview(
         mediaUrl(preview.audio_url.replace(/^\/media\//, "")),
+        {
+          onPlay: () => setVoicePreviewPlayingId(character.id),
+          onEnd: () =>
+            setVoicePreviewPlayingId((id) =>
+              id === character.id ? null : id,
+            ),
+        },
       );
-      previewAudioRef.current = audio;
-      await audio.play();
     } catch {
       /* ignore transient play errors */
     } finally {
-      setPreviewingVoiceId(null);
+      setPreviewLoadingId(null);
     }
   }
 
@@ -665,11 +678,11 @@ export default function CharactersPage() {
                             <button
                               type="button"
                               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-teal text-primary-foreground shadow-glow transition-transform hover:scale-105 active:scale-95 disabled:opacity-60"
-                              disabled={previewingVoiceId === c.id}
+                              disabled={previewLoadingId === c.id}
                               onClick={() => void playCurrentVoice(c)}
                               aria-label={`Play ${c.name} voice`}
                             >
-                              {previewingVoiceId === c.id ? (
+                              {previewLoadingId === c.id ? (
                                 <Spinner className="h-4 w-4 border-t-primary-foreground" />
                               ) : (
                                 <Play className="h-4 w-4 fill-current" />
@@ -679,7 +692,10 @@ export default function CharactersPage() {
                               <div className="truncate text-sm font-semibold text-foreground">
                                 {c.voice_display_name || c.default_voice_id}
                               </div>
-                              <VoiceWave className="mt-1.5" active={previewingVoiceId === c.id} />
+                              <VoiceWave
+                                className="mt-1.5"
+                                active={voicePreviewPlayingId === c.id}
+                              />
                             </div>
                           </div>
 
@@ -743,7 +759,7 @@ export default function CharactersPage() {
                       ) : (
                         <div className="space-y-3">
                           <p className="text-xs text-muted-foreground">
-                            No voice attached yet—this character is on the roster
+                            No voice attached yet. This character is on the roster
                             but still needs a voice.
                           </p>
                           <Link
@@ -777,24 +793,35 @@ export default function CharactersPage() {
                       </button>
                       {c.sample_texts.length > 0 ? (
                         <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                          {Math.min(c.sample_texts.length, 4)} samples
+                          {Math.min(c.sample_texts.length, 4)} import lines
                         </span>
                       ) : null}
                     </div>
 
-                    {c.sample_texts.length > 0 ? (
-                      <div className="mt-3 space-y-2 border-t border-border pt-4">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          Lines from your import (not voice preview text)
-                        </p>
-                        {c.sample_texts.slice(0, 4).map((line, i) => (
-                          <div key={i} className="flex gap-2 rounded-xl bg-surface-sunken/60 px-3 py-2">
+                    <div className="mt-3 space-y-2 border-t border-border pt-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Import transcript (source lines from footage)
+                      </p>
+                      {c.sample_texts.length > 0 ? (
+                        c.sample_texts.slice(0, 4).map((line, i) => (
+                          <div
+                            key={i}
+                            className="flex gap-2 rounded-xl bg-surface-sunken/60 px-3 py-2"
+                          >
                             <Quote className="h-3 w-3 shrink-0 text-primary" />
-                            <p className="text-[12px] italic leading-relaxed text-muted-foreground">{line}</p>
+                            <p className="text-[12px] italic leading-relaxed text-muted-foreground">
+                              {line}
+                            </p>
                           </div>
-                        ))}
-                      </div>
-                    ) : null}
+                        ))
+                      ) : (
+                        <p className="text-[12px] text-muted-foreground">
+                          {c.source_episode_id
+                            ? "No lines matched this character on the import yet."
+                            : "Manual characters only show import lines after you link them to footage, or use Voice Studio for spoken clips."}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </article>
               );

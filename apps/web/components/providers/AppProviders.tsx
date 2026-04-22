@@ -2,7 +2,12 @@
 
 import type { ReactNode } from "react";
 import { ProjectProvider } from "./ProjectProvider";
+import { ToastProvider } from "./ToastProvider";
 
 export function AppProviders({ children }: { children: ReactNode }) {
-  return <ProjectProvider>{children}</ProjectProvider>;
+  return (
+    <ToastProvider>
+      <ProjectProvider>{children}</ProjectProvider>
+    </ToastProvider>
+  );
 }

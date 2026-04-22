@@ -829,6 +829,18 @@ class SqliteStore:
             rows = cur.fetchall()
         return [self._row_replacement(r) for r in rows]
 
+    def list_replacements_for_project(self, project_id: str) -> list[ReplacementRecord]:
+        with self._lock:
+            cur = self._cx.execute(
+                """SELECT r.* FROM replacements r
+                   INNER JOIN episodes e ON e.id = r.episode_id
+                   WHERE e.project_id = ?
+                   ORDER BY r.created_at DESC""",
+                (project_id,),
+            )
+            rows = cur.fetchall()
+        return [self._row_replacement(r) for r in rows]
+
     def add_replacement(self, rec: ReplacementRecord) -> ReplacementRecord:
         with self._lock:
             self._cx.execute(

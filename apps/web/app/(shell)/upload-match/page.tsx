@@ -30,10 +30,12 @@ import type {
   CharacterDto,
   EpisodeMediaJobResult,
   JobDto,
+  ReplacementDto,
   SpeakerGroupDto,
   TranscriptSegmentDto,
 } from "@/lib/api/types";
 import { useProjects } from "@/components/providers/ProjectProvider";
+import { useToast } from "@/components/providers/ToastProvider";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -118,6 +120,20 @@ function speakerRowDomId(label: string): string {
   return `spk-${label.replace(/[^a-zA-Z0-9_-]+/g, "_")}`;
 }
 
+function matchCharacterIdForSegment(
+  seg: TranscriptSegmentDto,
+  chars: CharacterDto[],
+): string {
+  const label = seg.speaker_label ?? "";
+  const hit = chars.find(
+    (c) =>
+      Boolean(c.default_voice_id) &&
+      Boolean(label) &&
+      c.source_speaker_labels.includes(label),
+  );
+  return hit?.id ?? "";
+}
+
 type Phase = "idle" | "uploading" | "processing" | "done" | "failed";
 
 const PIPELINE_STEPS = [
@@ -172,6 +188,7 @@ type PersistedImportContext = {
 };
 
 export default function UploadMatchPage() {
+  const toast = useToast();
   const { activeProjectId, projects, setActiveProjectId, loading: boot } =
     useProjects();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -212,6 +229,17 @@ export default function UploadMatchPage() {
   );
   /** Project roster: used to know if any character has a voice (Replace Lines gating). */
   const [projectRoster, setProjectRoster] = useState<CharacterDto[]>([]);
+  const [episodeReplacements, setEpisodeReplacements] = useState<
+    ReplacementDto[]
+  >([]);
+  const [charPickBySegment, setCharPickBySegment] = useState<
+    Record<string, string>
+  >({});
+  const [editSegmentId, setEditSegmentId] = useState<string | null>(null);
+  const [editSegmentDraft, setEditSegmentDraft] = useState("");
+  const [generatingSegmentId, setGeneratingSegmentId] = useState<string | null>(
+    null,
+  );
   const uploadSessionRef = useRef(0);
   const progressTrustRef = useRef({
     lastP: -1,
@@ -264,6 +292,7 @@ export default function UploadMatchPage() {
         if (st === "done") {
           setPhase("done");
           setImportBootKind("none");
+          toast("Import saved to this project");
           return;
         }
         setPhase("failed");
@@ -278,7 +307,7 @@ export default function UploadMatchPage() {
         );
       }
     },
-    [],
+    [toast],
   );
 
   async function startUpload() {
@@ -380,31 +409,74 @@ export default function UploadMatchPage() {
     setSpeakerGroups([]);
     setSpeakerGroupsError(null);
     setSelectedTranscriptSegmentId(null);
+    setPhase("idle");
   }, [storageKey]);
 
   useEffect(() => {
-    if (!storageKey) return;
+    if (!storageKey || !activeProjectId) return;
+    let cancelled = false;
     try {
       const raw =
         window.localStorage.getItem(storageKey) ??
         (legacyStorageKey ? window.localStorage.getItem(legacyStorageKey) : null);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as PersistedImportContext;
-      if (!parsed?.media?.episode_id) return;
-      setPersistedMedia(parsed.media);
-      setImportBootKind("restored");
-      setPhase("done");
-      if (legacyStorageKey) {
-        try {
-          window.localStorage.removeItem(legacyStorageKey);
-        } catch {
-          /* ignore */
+      if (raw) {
+        const parsed = JSON.parse(raw) as PersistedImportContext;
+        if (parsed?.media?.episode_id) {
+          setPersistedMedia(parsed.media);
+          setImportBootKind("restored");
+          setPhase("done");
+          if (legacyStorageKey) {
+            try {
+              window.localStorage.removeItem(legacyStorageKey);
+            } catch {
+              /* ignore */
+            }
+          }
+          return;
         }
       }
     } catch {
       /* ignore invalid local data */
     }
-  }, [storageKey, legacyStorageKey]);
+
+    /* Do not resume from API while an upload or worker job is in flight (busy is false during poll). */
+    if (phase !== "idle" && phase !== "failed") return;
+    if (busy) return;
+
+    void (async () => {
+      try {
+        const eps = await api.listEpisodes(activeProjectId);
+        const scored = eps
+          .filter((e) => e.segment_count > 0)
+          .sort(
+            (a, b) =>
+              new Date(b.updated_at).getTime() -
+              new Date(a.updated_at).getTime(),
+          );
+        const ep = scored.find((e) => e.status === "ready") ?? scored[0];
+        if (!ep || cancelled) return;
+        const media: EpisodeMediaJobResult = {
+          episode_id: ep.id,
+          project_id: ep.project_id,
+          source_video_path: ep.source_video_path ?? "",
+          extracted_audio_path: ep.extracted_audio_path ?? "",
+          thumbnail_paths: ep.thumbnail_paths ?? [],
+          duration_sec: ep.duration_sec ?? undefined,
+          transcript_segment_count: ep.segment_count,
+        };
+        setPersistedMedia(media);
+        setPhase("done");
+        setImportBootKind("restored");
+        toast("Loaded saved import for this project");
+      } catch {
+        /* ignore */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storageKey, legacyStorageKey, activeProjectId, phase, busy, toast]);
 
   useEffect(() => {
     if (phase !== "processing") return;
@@ -549,9 +621,84 @@ export default function UploadMatchPage() {
     };
   }, [activeProjectId, phase, createdChars]);
 
+  useEffect(() => {
+    const ep = transcriptEpisodeId;
+    if (!ep || phase !== "done") {
+      setEpisodeReplacements([]);
+      return;
+    }
+    let cancelled = false;
+    void api.listEpisodeReplacements(ep).then((rows) => {
+      if (!cancelled) setEpisodeReplacements(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [transcriptEpisodeId, phase]);
+
+  useEffect(() => {
+    if (!transcriptSegments.length || !projectRoster.length) return;
+    setCharPickBySegment((prev) => {
+      const next = { ...prev };
+      for (const row of transcriptSegments) {
+        if (next[row.segment_id]) continue;
+        const m = matchCharacterIdForSegment(row, projectRoster);
+        if (m) next[row.segment_id] = m;
+      }
+      return next;
+    });
+  }, [transcriptSegments, projectRoster]);
+
   const anyCharacterHasVoice = projectRoster.some((c) =>
     Boolean(c.default_voice_id),
   );
+
+  async function generateLineFromTranscript(segmentId: string, text: string) {
+    const ep = transcriptEpisodeId;
+    const cid = charPickBySegment[segmentId];
+    if (!ep || !cid || !text.trim()) {
+      setError("Pick a character with a voice and a line to speak.");
+      return;
+    }
+    const ch = projectRoster.find((c) => c.id === cid);
+    if (!ch?.default_voice_id) {
+      setError(
+        "That character needs a voice. Attach one in Voice Studio first.",
+      );
+      return;
+    }
+    setGeneratingSegmentId(segmentId);
+    setError(null);
+    try {
+      const line = text.trim();
+      const existing = episodeReplacements.find(
+        (r) => r.segment_id === segmentId && r.character_id === cid,
+      );
+      let rep: ReplacementDto;
+      if (existing) {
+        rep = await api.patchEpisodeReplacement(ep, existing.replacement_id, {
+          replacement_text: line,
+          regenerate_audio: true,
+        });
+      } else {
+        rep = await api.createSegmentReplacement(ep, segmentId, {
+          character_id: cid,
+          replacement_text: line,
+        });
+      }
+      setEpisodeReplacements((prev) => {
+        const others = prev.filter(
+          (r) => !(r.segment_id === segmentId && r.character_id === cid),
+        );
+        return [rep, ...others];
+      });
+      toast("Line audio saved to this project");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not generate audio");
+    } finally {
+      setGeneratingSegmentId(null);
+    }
+  }
 
   async function handleRename(label: string, displayName: string) {
     const ep = transcriptEpisodeId;
@@ -1083,6 +1230,7 @@ export default function UploadMatchPage() {
                                       thumb_index: i,
                                     },
                                   );
+                                  toast("Character photo updated");
                                 } finally {
                                   e.target.value = "";
                                 }
@@ -1211,7 +1359,7 @@ export default function UploadMatchPage() {
                             >
                               <div className="flex flex-wrap items-baseline justify-between gap-2">
                                 <span className="font-mono text-[11px] text-muted">
-                                  {formatTimecode(row.start_time)} –{" "}
+                                  {formatTimecode(row.start_time)} to{" "}
                                   {formatTimecode(row.end_time)}
                                 </span>
                                 <Badge
@@ -1233,24 +1381,126 @@ export default function UploadMatchPage() {
                               </p>
                             </button>
                             {ep ? (
-                              <Link
-                                href={`/replace-lines?episode=${encodeURIComponent(ep)}&segment=${encodeURIComponent(row.segment_id)}`}
-                                title={
-                                  anyCharacterHasVoice
-                                    ? "Jump to this line in Replace Lines"
-                                    : "Tip: attach voices in Voice Studio first for the best Replace Lines workflow"
-                                }
-                                className={`inline-flex shrink-0 items-center justify-center self-start rounded-md px-2.5 py-1 text-[11px] font-medium ring-1 transition sm:mt-0.5 ${
-                                  anyCharacterHasVoice
-                                    ? "bg-white/[0.06] text-text ring-white/[0.08] hover:bg-white/[0.1]"
-                                    : "bg-white/[0.02] text-muted-foreground ring-white/[0.06] hover:bg-white/[0.04]"
-                                }`}
-                                onClick={(e: MouseEvent) => e.stopPropagation()}
-                              >
-                                Use in Replace Lines
-                              </Link>
+                              <div className="flex shrink-0 flex-col gap-2 self-start sm:mt-0.5 sm:items-end">
+                                {anyCharacterHasVoice ? (
+                                  <>
+                                    <label className="block text-[10px] font-medium text-muted">
+                                      <span className="sr-only">Character</span>
+                                      <select
+                                        className="max-w-[11rem] rounded-md border border-white/[0.1] bg-canvas/80 px-2 py-1 text-[11px] text-text"
+                                        value={charPickBySegment[row.segment_id] ?? ""}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          setCharPickBySegment((prev) => ({
+                                            ...prev,
+                                            [row.segment_id]: v,
+                                          }));
+                                        }}
+                                        onClick={(e: MouseEvent) =>
+                                          e.stopPropagation()
+                                        }
+                                      >
+                                        <option value="">Character…</option>
+                                        {projectRoster
+                                          .filter((c) => c.default_voice_id)
+                                          .map((c) => (
+                                            <option key={c.id} value={c.id}>
+                                              {c.name}
+                                            </option>
+                                          ))}
+                                      </select>
+                                    </label>
+                                    <div className="flex flex-wrap justify-end gap-1.5">
+                                      <button
+                                        type="button"
+                                        className="rounded-md bg-primary/90 px-2.5 py-1 text-[11px] font-semibold text-primary-foreground ring-1 ring-primary/30 disabled:opacity-50"
+                                        disabled={
+                                          generatingSegmentId === row.segment_id
+                                        }
+                                        onClick={(e: MouseEvent) => {
+                                          e.stopPropagation();
+                                          void generateLineFromTranscript(
+                                            row.segment_id,
+                                            row.text,
+                                          );
+                                        }}
+                                      >
+                                        {generatingSegmentId === row.segment_id
+                                          ? "Working…"
+                                          : "Generate with voice"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded-md bg-white/[0.06] px-2.5 py-1 text-[11px] font-medium text-text ring-1 ring-white/[0.08] hover:bg-white/[0.1]"
+                                        onClick={(e: MouseEvent) => {
+                                          e.stopPropagation();
+                                          if (editSegmentId === row.segment_id) {
+                                            setEditSegmentId(null);
+                                            setEditSegmentDraft("");
+                                          } else {
+                                            setEditSegmentId(row.segment_id);
+                                            setEditSegmentDraft(row.text);
+                                          }
+                                        }}
+                                      >
+                                        {editSegmentId === row.segment_id
+                                          ? "Close edit"
+                                          : "Edit then generate"}
+                                      </button>
+                                    </div>
+                                  </>
+                                ) : null}
+                                <Link
+                                  href={`/replace-lines?episode=${encodeURIComponent(ep)}&segment=${encodeURIComponent(row.segment_id)}`}
+                                  title={
+                                    anyCharacterHasVoice
+                                      ? "Advanced: rewrite and refine in Replace Lines"
+                                      : "Attach voices first, then open Replace Lines"
+                                  }
+                                  className={`inline-flex items-center justify-center rounded-md px-2.5 py-1 text-[11px] font-medium ring-1 transition ${
+                                    anyCharacterHasVoice
+                                      ? "bg-white/[0.06] text-text ring-white/[0.08] hover:bg-white/[0.1]"
+                                      : "bg-white/[0.02] text-muted-foreground ring-white/[0.06] hover:bg-white/[0.04]"
+                                  }`}
+                                  onClick={(e: MouseEvent) => e.stopPropagation()}
+                                >
+                                  Use in Replace Lines
+                                </Link>
+                              </div>
                             ) : null}
                           </div>
+                          {editSegmentId === row.segment_id ? (
+                            <div className="border-t border-white/[0.06] px-2.5 py-2">
+                              <label className="text-[10px] font-medium text-muted">
+                                Text to speak
+                                <textarea
+                                  className="mt-1 w-full rounded-md border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-[13px] text-text"
+                                  rows={3}
+                                  value={editSegmentDraft}
+                                  onChange={(e) =>
+                                    setEditSegmentDraft(e.target.value)
+                                  }
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                className="mt-2 rounded-md bg-primary/90 px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                                disabled={
+                                  generatingSegmentId === row.segment_id
+                                }
+                                onClick={() =>
+                                  void generateLineFromTranscript(
+                                    row.segment_id,
+                                    editSegmentDraft,
+                                  )
+                                }
+                              >
+                                {generatingSegmentId === row.segment_id
+                                  ? "Generating…"
+                                  : "Generate edited line"}
+                              </button>
+                            </div>
+                          ) : null}
                         </li>
                       );
                     })}

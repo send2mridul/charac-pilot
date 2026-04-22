@@ -465,6 +465,9 @@ export const api = {
   listProjectClips: (projectId: string) =>
     requestJson<VoiceClipDto[]>(`/projects/${projectId}/clips`),
 
+  listProjectReplacements: (projectId: string) =>
+    requestJson<ReplacementDto[]>(`/projects/${projectId}/replacements`),
+
   patchVoiceClip: (clipId: string, body: { title?: string }) =>
     requestJson<VoiceClipDto>(`/clips/${encodeURIComponent(clipId)}`, {
       method: "PATCH",

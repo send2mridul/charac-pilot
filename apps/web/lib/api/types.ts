@@ -15,6 +15,10 @@ export type EpisodeDto = {
   status: string;
   segment_count: number;
   updated_at: string;
+  source_video_path?: string | null;
+  extracted_audio_path?: string | null;
+  thumbnail_paths?: string[];
+  duration_sec?: number | null;
 };
 
 export type CharacterDto = {

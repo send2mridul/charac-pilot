@@ -142,6 +142,10 @@ def list_replacements(episode_id: str) -> list[ReplacementOut]:
     return [_to_out(r) for r in store.list_replacements(episode_id)]
 
 
+def list_replacements_for_project(project_id: str) -> list[ReplacementOut]:
+    return [_to_out(r) for r in store.list_replacements_for_project(project_id)]
+
+
 def patch_replacement(
     episode_id: str,
     replacement_id: str,

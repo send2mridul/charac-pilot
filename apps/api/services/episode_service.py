@@ -31,4 +31,8 @@ def _to_out(e: EpisodeRecord) -> EpisodeOut:
         status=e.status,
         segment_count=e.segment_count,
         updated_at=e.updated_at,
+        source_video_path=e.source_video_rel,
+        extracted_audio_path=e.extracted_audio_rel,
+        thumbnail_paths=list(e.thumbnail_rels),
+        duration_sec=e.duration_sec,
     )
