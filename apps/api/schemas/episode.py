@@ -12,6 +12,7 @@ class EpisodeOut(BaseModel):
     extracted_audio_path: str | None = None
     thumbnail_paths: list[str] = Field(default_factory=list)
     duration_sec: float | None = None
+    transcript_language: str | None = None
 
 
 class EpisodeUploadBody(BaseModel):

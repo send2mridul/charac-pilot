@@ -35,4 +35,5 @@ def _to_out(e: EpisodeRecord) -> EpisodeOut:
         extracted_audio_path=e.extracted_audio_rel,
         thumbnail_paths=list(e.thumbnail_rels),
         duration_sec=e.duration_sec,
+        transcript_language=e.transcript_language,
     )

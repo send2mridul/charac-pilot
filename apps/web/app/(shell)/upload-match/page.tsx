@@ -9,15 +9,19 @@ import {
   type MouseEvent,
 } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
   ChevronDown,
   Download,
   FileText,
   FileVideo,
+  Film,
   GitMerge,
+  Layers,
   Mic2,
   MoreHorizontal,
+  Package,
   Pause,
   Pencil,
   Play,
@@ -140,8 +144,48 @@ function spokenLanguageUiLabel(code: string | null | undefined): string {
   return String(code).trim();
 }
 
+type HindiTranscriptViewMode = "roman" | "devanagari";
+
+function storageKeyForHindiTranscriptView(episodeId: string): string {
+  return `castweave:hindi-transcript-view:${episodeId}`;
+}
+
+function isHindiTranscriptLanguage(code: string | null | undefined): boolean {
+  if (code == null || String(code).trim() === "") return false;
+  const s = String(code).trim().toLowerCase();
+  const b = s.split("-")[0] ?? "";
+  return b === "hi" || s === "hindi";
+}
+
+/**
+ * Same transcript line in two display forms: Devanagari when `text_original` exists,
+ * else Roman `text` for both modes.
+ */
+function hindiPrimaryDisplayText(
+  seg: TranscriptSegmentDto,
+  mode: HindiTranscriptViewMode,
+): string {
+  if (mode === "devanagari") {
+    const o = seg.text_original?.trim();
+    if (o) return o;
+  }
+  return (seg.text ?? "").trim();
+}
+
 function speakerRowDomId(label: string): string {
   return `spk-${label.replace(/[^a-zA-Z0-9_-]+/g, "_")}`;
+}
+
+function episodeImportLabel(ep: EpisodeDto): string {
+  const t = ep.title?.trim();
+  if (t) return t;
+  const path = ep.source_video_path?.trim();
+  if (path) {
+    const parts = path.split(/[/\\]/);
+    const last = parts[parts.length - 1];
+    if (last) return last;
+  }
+  return ep.id.slice(0, 8);
 }
 
 function matchCharacterIdForSegment(
@@ -213,6 +257,7 @@ type PersistedImportContext = {
 
 export default function UploadMatchPage() {
   const toast = useToast();
+  const searchParams = useSearchParams();
   const { activeProjectId, projects, setActiveProjectId, loading: boot } =
     useProjects();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -259,9 +304,13 @@ export default function UploadMatchPage() {
   const [charPickBySegment, setCharPickBySegment] = useState<
     Record<string, string>
   >({});
-  const [editSegmentId, setEditSegmentId] = useState<string | null>(null);
-  const [editSegmentDraft, setEditSegmentDraft] = useState("");
-  const editRowRef = useRef<HTMLLIElement>(null);
+  const [lineEditorDraft, setLineEditorDraft] = useState("");
+  const [lineEditorTone, setLineEditorTone] = useState("");
+  /** Hindi imports only: Hindi script (default) vs Roman helper (persisted per episode). */
+  const [hindiTranscriptViewMode, setHindiTranscriptViewMode] =
+    useState<HindiTranscriptViewMode>("devanagari");
+  const [saveTextBusy, setSaveTextBusy] = useState(false);
+  const lineListRef = useRef<HTMLUListElement>(null);
   const [generatingSegmentId, setGeneratingSegmentId] = useState<string | null>(
     null,
   );
@@ -271,7 +320,9 @@ export default function UploadMatchPage() {
   const [sourceVoiceBusy, setSourceVoiceBusy] = useState(false);
   const [confirmDeleteSegId, setConfirmDeleteSegId] = useState<string | null>(null);
   const [playingSourceSegId, setPlayingSourceSegId] = useState<string | null>(null);
+  const [playingGeneratedSegId, setPlayingGeneratedSegId] = useState<string | null>(null);
   const sourceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const generatedAudioRef = useRef<HTMLAudioElement | null>(null);
   const [projectClipCount, setProjectClipCount] = useState(0);
   const [projectEpisodes, setProjectEpisodes] = useState<EpisodeDto[]>([]);
   const uploadSessionRef = useRef(0);
@@ -338,7 +389,7 @@ export default function UploadMatchPage() {
           setSpeakerGroups([]);
           setSpeakerGroupsError(null);
           setCreatedChars({});
-          setEditSegmentId(null);
+          setSelectedTranscriptSegmentId(null);
           toast("New import ready. Workspace updated.");
           if (activeProjectId) {
             void api.listEpisodes(activeProjectId).then((rows) => {
@@ -411,6 +462,42 @@ export default function UploadMatchPage() {
       ? mediaResultFromJob(job)
       : null);
   const transcriptEpisodeId = resolveEpisodeIdForTranscript(job, mediaDone);
+
+  const activeEpisodeRecord = useMemo(
+    () =>
+      transcriptEpisodeId
+        ? projectEpisodes.find((e) => e.id === transcriptEpisodeId)
+        : undefined,
+    [projectEpisodes, transcriptEpisodeId],
+  );
+
+  const isHindiTranscriptImport = useMemo(
+    () =>
+      isHindiTranscriptLanguage(
+        mediaDone?.transcript_language ??
+          activeEpisodeRecord?.transcript_language,
+      ),
+    [mediaDone?.transcript_language, activeEpisodeRecord?.transcript_language],
+  );
+
+  const hindiViewModeStorageKey =
+    transcriptEpisodeId && isHindiTranscriptImport
+      ? storageKeyForHindiTranscriptView(transcriptEpisodeId)
+      : null;
+
+  useEffect(() => {
+    if (!hindiViewModeStorageKey) return;
+    try {
+      const v = window.localStorage.getItem(hindiViewModeStorageKey);
+      if (v === "devanagari" || v === "roman") {
+        setHindiTranscriptViewMode(v);
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    setHindiTranscriptViewMode("devanagari");
+  }, [hindiViewModeStorageKey]);
 
   const ignoredStorageKey = transcriptEpisodeId
     ? `castweave:ignored-cast:${transcriptEpisodeId}`
@@ -731,14 +818,75 @@ export default function UploadMatchPage() {
   }, [activeProjectId, phase, episodeReplacements]);
 
   useEffect(() => {
-    if (editSegmentId && editRowRef.current) {
-      editRowRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (!selectedTranscriptSegmentId) return;
+    const el = document.getElementById(`seg-${selectedTranscriptSegmentId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selectedTranscriptSegmentId]);
+
+  useEffect(() => {
+    if (!transcriptFetchDone || transcriptError || transcriptSegments.length === 0) {
+      return;
     }
-  }, [editSegmentId]);
+    const exists = transcriptSegments.some(
+      (s) => s.segment_id === selectedTranscriptSegmentId,
+    );
+    if (!selectedTranscriptSegmentId || !exists) {
+      setSelectedTranscriptSegmentId(transcriptSegments[0]!.segment_id);
+    }
+  }, [
+    transcriptFetchDone,
+    transcriptError,
+    transcriptSegments,
+    selectedTranscriptSegmentId,
+  ]);
+
+  const episodeUrlParam = searchParams.get("episode");
+  useEffect(() => {
+    if (!episodeUrlParam || !activeProjectId || phase !== "done") return;
+    const ep = projectEpisodes.find((e) => e.id === episodeUrlParam);
+    if (!ep) return;
+    if (transcriptEpisodeId === ep.id) return;
+    switchToEpisode(ep);
+  }, [episodeUrlParam, activeProjectId, phase, projectEpisodes, transcriptEpisodeId]);
+
+  useEffect(() => {
+    if (!selectedTranscriptSegmentId) {
+      setLineEditorDraft("");
+      setLineEditorTone("");
+      return;
+    }
+    const row = transcriptSegments.find(
+      (s) => s.segment_id === selectedTranscriptSegmentId,
+    );
+    if (!row) return;
+    const primary = isHindiTranscriptImport
+      ? hindiPrimaryDisplayText(row, hindiTranscriptViewMode)
+      : row.text;
+    setLineEditorDraft(primary);
+    const cid = charPickBySegment[selectedTranscriptSegmentId] ?? "";
+    const rep = episodeReplacements.find(
+      (r) =>
+        r.segment_id === selectedTranscriptSegmentId &&
+        (!cid || r.character_id === cid),
+    );
+    setLineEditorTone((rep?.tone_style ?? "").trim());
+  }, [
+    selectedTranscriptSegmentId,
+    transcriptSegments,
+    episodeReplacements,
+    charPickBySegment,
+    isHindiTranscriptImport,
+    hindiTranscriptViewMode,
+  ]);
 
   function switchToEpisode(ep: EpisodeDto) {
     if (sourceAudioRef.current) { sourceAudioRef.current.pause(); sourceAudioRef.current = null; }
     setPlayingSourceSegId(null);
+    if (generatedAudioRef.current) {
+      generatedAudioRef.current.pause();
+      generatedAudioRef.current = null;
+    }
+    setPlayingGeneratedSegId(null);
     const media: EpisodeMediaJobResult = {
       episode_id: ep.id,
       project_id: ep.project_id,
@@ -747,6 +895,7 @@ export default function UploadMatchPage() {
       thumbnail_paths: ep.thumbnail_paths ?? [],
       duration_sec: ep.duration_sec ?? undefined,
       transcript_segment_count: ep.segment_count,
+      transcript_language: ep.transcript_language ?? undefined,
     };
     setPersistedMedia(media);
     setPhase("done");
@@ -758,7 +907,6 @@ export default function UploadMatchPage() {
     setSpeakerGroupsError(null);
     setCreatedChars({});
     setSelectedTranscriptSegmentId(null);
-    setEditSegmentId(null);
     toast("Switched to imported video");
   }
 
@@ -774,7 +922,17 @@ export default function UploadMatchPage() {
     setConfirmDeleteSegId(null);
     try {
       await api.deleteTranscriptSegment(ep, segId);
-      setTranscriptSegments((prev) => prev.filter((s) => s.segment_id !== segId));
+      setTranscriptSegments((prev) => {
+        const next = prev.filter((s) => s.segment_id !== segId);
+        setSelectedTranscriptSegmentId((sel) => {
+          if (sel !== segId) return sel;
+          return next[0]?.segment_id ?? null;
+        });
+        return next;
+      });
+      setEpisodeReplacements((prev) =>
+        prev.filter((r) => r.segment_id !== segId),
+      );
       toast("Transcript line removed");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not delete segment");
@@ -787,6 +945,11 @@ export default function UploadMatchPage() {
       setPlayingSourceSegId(null);
       return;
     }
+    if (generatedAudioRef.current) {
+      generatedAudioRef.current.pause();
+      generatedAudioRef.current = null;
+      setPlayingGeneratedSegId(null);
+    }
     if (sourceAudioRef.current) { sourceAudioRef.current.pause(); sourceAudioRef.current = null; }
     const url = api.segmentSourceAudioUrl(episodeId, segmentId);
     const audio = new Audio(url);
@@ -797,10 +960,89 @@ export default function UploadMatchPage() {
     audio.play().catch(() => { setPlayingSourceSegId(null); sourceAudioRef.current = null; });
   }
 
+  function playGeneratedSegment(segmentId: string) {
+    const ep = transcriptEpisodeId;
+    if (!ep) return;
+    const cid = charPickBySegment[segmentId] ?? "";
+    const rep = episodeReplacements.find(
+      (r) =>
+        r.segment_id === segmentId && (!cid || r.character_id === cid),
+    );
+    if (!rep?.audio_url) {
+      toast("Generate audio for this line first.");
+      return;
+    }
+    if (playingGeneratedSegId === segmentId) {
+      generatedAudioRef.current?.pause();
+      setPlayingGeneratedSegId(null);
+      return;
+    }
+    if (generatedAudioRef.current) {
+      generatedAudioRef.current.pause();
+      generatedAudioRef.current = null;
+    }
+    if (sourceAudioRef.current) {
+      sourceAudioRef.current.pause();
+      sourceAudioRef.current = null;
+      setPlayingSourceSegId(null);
+    }
+    const url = mediaUrl(rep.audio_url.replace(/^\/media\//, ""));
+    const audio = new Audio(url);
+    generatedAudioRef.current = audio;
+    setPlayingGeneratedSegId(segmentId);
+    audio.onended = () => {
+      setPlayingGeneratedSegId(null);
+      generatedAudioRef.current = null;
+    };
+    audio.onerror = () => {
+      setPlayingGeneratedSegId(null);
+      generatedAudioRef.current = null;
+      toast("Could not play generated audio");
+    };
+    audio.play().catch(() => {
+      setPlayingGeneratedSegId(null);
+      generatedAudioRef.current = null;
+    });
+  }
+
+  async function saveLineTextOnly(): Promise<void> {
+    const ep = transcriptEpisodeId;
+    const sid = selectedTranscriptSegmentId;
+    if (!ep || !sid || saveTextBusy) return;
+    const t = lineEditorDraft.trim();
+    if (!t) {
+      toast("Add text before saving");
+      return;
+    }
+    const row = transcriptSegments.find((s) => s.segment_id === sid);
+    const priorPrimary = row
+      ? isHindiTranscriptImport
+        ? hindiPrimaryDisplayText(row, hindiTranscriptViewMode)
+        : row.text
+      : "";
+    if (row && priorPrimary.trim() === t) {
+      toast("No changes to save");
+      return;
+    }
+    setSaveTextBusy(true);
+    setError(null);
+    try {
+      const updated = await api.patchTranscriptSegmentText(ep, sid, { text: t });
+      setTranscriptSegments((prev) =>
+        prev.map((s) => (s.segment_id === sid ? updated : s)),
+      );
+      toast("Line text saved");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not save text");
+    } finally {
+      setSaveTextBusy(false);
+    }
+  }
+
   async function generateLineFromTranscript(
     segmentId: string,
     text: string,
-    options?: { quiet?: boolean },
+    options?: { quiet?: boolean; tone_style?: string | null },
   ): Promise<boolean> {
     if (generatingSegmentId === segmentId || batchLineBusy) return false;
     const ep = transcriptEpisodeId;
@@ -824,6 +1066,13 @@ export default function UploadMatchPage() {
     if (!options?.quiet) setError(null);
     try {
       const line = text.trim();
+      const toneRaw =
+        options?.tone_style !== undefined
+          ? options.tone_style
+          : segmentId === selectedTranscriptSegmentId
+            ? lineEditorTone.trim()
+            : "";
+      const tone_style = toneRaw ? toneRaw : undefined;
       const existing = episodeReplacements.find(
         (r) => r.segment_id === segmentId && r.character_id === cid,
       );
@@ -831,12 +1080,14 @@ export default function UploadMatchPage() {
       if (existing) {
         rep = await api.patchEpisodeReplacement(ep, existing.replacement_id, {
           replacement_text: line,
+          tone_style: tone_style ?? existing.tone_style ?? undefined,
           regenerate_audio: true,
         });
       } else {
         rep = await api.createSegmentReplacement(ep, segmentId, {
           character_id: cid,
           replacement_text: line,
+          tone_style,
         });
       }
       setEpisodeReplacements((prev) => {
@@ -869,8 +1120,12 @@ export default function UploadMatchPage() {
         if (!cid) continue;
         const ch = projectRoster.find((c) => c.id === cid);
         if (!ch?.default_voice_id) continue;
+        const existing = episodeReplacements.find(
+          (r) => r.segment_id === row.segment_id && r.character_id === cid,
+        );
         const ok = await generateLineFromTranscript(row.segment_id, row.text, {
           quiet: true,
+          tone_style: existing?.tone_style ?? undefined,
         });
         if (ok) n += 1;
       }
@@ -897,8 +1152,12 @@ export default function UploadMatchPage() {
         if (!cid) continue;
         const ch = projectRoster.find((c) => c.id === cid);
         if (!ch?.default_voice_id) continue;
+        const existing = episodeReplacements.find(
+          (r) => r.segment_id === row.segment_id && r.character_id === cid,
+        );
         const ok = await generateLineFromTranscript(row.segment_id, row.text, {
           quiet: true,
+          tone_style: existing?.tone_style ?? undefined,
         });
         if (ok) n += 1;
       }
@@ -1094,11 +1353,49 @@ export default function UploadMatchPage() {
   const workspaceReady = Boolean(mediaDone) && phase === "done";
   const isReImporting = importBootKind === "fresh" && (phase === "uploading" || phase === "processing");
 
+  const selectedSeg = useMemo(
+    () =>
+      transcriptSegments.find((s) => s.segment_id === selectedTranscriptSegmentId) ??
+      null,
+    [transcriptSegments, selectedTranscriptSegmentId],
+  );
+
+  const lineEditorReplacement = useMemo(() => {
+    if (!selectedTranscriptSegmentId) return null;
+    const cid = charPickBySegment[selectedTranscriptSegmentId] ?? "";
+    return (
+      episodeReplacements.find(
+        (r) =>
+          r.segment_id === selectedTranscriptSegmentId &&
+          (!cid || r.character_id === cid),
+      ) ?? null
+    );
+  }, [selectedTranscriptSegmentId, charPickBySegment, episodeReplacements]);
+
+  const episodeReplacementsForWorkspace = useMemo(
+    () =>
+      transcriptEpisodeId
+        ? episodeReplacements.filter((r) => r.episode_id === transcriptEpisodeId)
+        : [],
+    [episodeReplacements, transcriptEpisodeId],
+  );
+
+  const selectedCharIdForLine = selectedSeg
+    ? (charPickBySegment[selectedSeg.segment_id] ?? "")
+    : "";
+  const selectedCharHasVoice = Boolean(
+    selectedCharIdForLine &&
+      projectRoster.find((c) => c.id === selectedCharIdForLine)?.default_voice_id,
+  );
+  const canGenerateSelectedLine = Boolean(
+    selectedSeg && transcriptEpisodeId && selectedCharHasVoice,
+  );
+
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
       <div className="flex flex-wrap items-end justify-between gap-4 pb-1">
-        <div className="max-w-2xl">
+        <div className="max-w-4xl">
           <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
             <Wand2 className="h-3 w-3" />
             Import workspace
@@ -1279,16 +1576,172 @@ export default function UploadMatchPage() {
         </div>
       ) : null}
 
-      {/* ── MAIN TWO-PANE WORKSPACE (shown after import) ── */}
+      {/* ── MAIN IMPORT EDITOR (workspace + cast + transcript) ── */}
       {workspaceReady ? (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[340px_1fr]">
+        <div className="space-y-6">
+          <Panel className="rounded-2xl border border-border bg-card p-4 shadow-soft">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Active import
+                </p>
+                <h2 className="mt-1 truncate text-lg font-semibold tracking-tight text-foreground">
+                  {activeEpisodeRecord
+                    ? episodeImportLabel(activeEpisodeRecord)
+                    : mediaDone?.source_video_path
+                      ? mediaDone.source_video_path.split(/[/\\]/).pop() || "Import"
+                      : "Import"}
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {mediaDone?.duration_sec != null
+                    ? `${Math.round(mediaDone.duration_sec)}s runtime`
+                    : ""}
+                  {mediaDone?.transcript_language
+                    ? ` · ${spokenLanguageUiLabel(mediaDone.transcript_language)}`
+                    : ""}
+                  {transcriptFetchDone
+                    ? ` · ${transcriptSegments.length} transcript lines`
+                    : transcriptLoading
+                      ? " · Loading transcript…"
+                      : ""}
+                  {speakerGroups.length > 0
+                    ? ` · ${visibleCastGroups.length} cast speaker${visibleCastGroups.length === 1 ? "" : "s"}`
+                    : ""}
+                </p>
+              </div>
+              <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                {isReImporting ? (
+                  <Badge tone="accent">New import running…</Badge>
+                ) : (
+                  <Badge tone="success">Workspace ready</Badge>
+                )}
+                {transcriptEpisodeId ? (
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-semibold">
+                    <a
+                      href={api.episodeTranscriptExportUrl(transcriptEpisodeId, "txt")}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Transcript .txt
+                    </a>
+                    <a
+                      href={api.episodeTranscriptExportUrl(transcriptEpisodeId, "srt")}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      .srt
+                    </a>
+                    <a
+                      href={api.episodeTranscriptExportUrl(transcriptEpisodeId, "vtt")}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      .vtt
+                    </a>
+                    {activeProjectId && projectClipCount > 0 ? (
+                      <a
+                        href={api.projectClipsZipUrl(activeProjectId)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-primary hover:underline"
+                      >
+                        <Package className="h-3.5 w-3.5" />
+                        Clips .zip ({projectClipCount})
+                      </a>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            {projectEpisodes.length > 0 ? (
+              <div className="mt-4 border-t border-border pt-3">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Episodes in this project ({projectEpisodes.length})
+                  {isReImporting ? (
+                    <span className="ml-2 font-normal normal-case text-amber-600 dark:text-amber-400">
+                      +1 importing…
+                    </span>
+                  ) : null}
+                </p>
+                <div className="flex max-w-full flex-wrap gap-1.5 overflow-x-auto pb-1">
+                  {projectEpisodes.map((ep) => {
+                    const active = transcriptEpisodeId === ep.id;
+                    return (
+                      <button
+                        key={ep.id}
+                        type="button"
+                        onClick={() => {
+                          if (!active) switchToEpisode(ep);
+                        }}
+                        className={`shrink-0 rounded-full px-3 py-1.5 text-left text-xs font-semibold transition ${
+                          active
+                            ? "bg-primary text-primary-foreground shadow-glow ring-1 ring-primary/30"
+                            : "border border-border bg-surface text-foreground hover:border-primary/40 hover:bg-primary/5"
+                        }`}
+                      >
+                        <span className="block max-w-[14rem] truncate">
+                          {episodeImportLabel(ep)}
+                        </span>
+                        <span className="mt-0.5 block text-[10px] font-normal opacity-80">
+                          {ep.segment_count} lines
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+            <details className="group mt-4 rounded-xl border border-border bg-surface-sunken/30 p-3">
+              <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold text-foreground [&::-webkit-details-marker]:hidden">
+                <UploadCloud className="h-4 w-4 text-primary" />
+                Upload a new video or replace this run
+                <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground transition group-open:rotate-180" />
+              </summary>
+              <div className="mt-3">
+                <label
+                  htmlFor="video-upload-re"
+                  className="group flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-border bg-card p-4 text-center hover:border-primary/40 hover:bg-primary/5"
+                >
+                  <span className="text-xs font-medium text-foreground">
+                    {file ? file.name : "Choose file"}
+                  </span>
+                  <input
+                    id="video-upload-re"
+                    type="file"
+                    className="hidden"
+                    accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm,.m4v,.avi"
+                    onChange={(e) => {
+                      const fnext = e.target.files?.[0] ?? null;
+                      setFile(fnext);
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={busy || isReImporting || !activeProjectId || !file}
+                  onClick={() => void startUpload()}
+                  className="mt-2 w-full rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                >
+                  {busy || isReImporting ? "Import in progress…" : "Upload and process"}
+                </button>
+              </div>
+            </details>
+          </Panel>
 
-          {/* ─── LEFT: Cast panel ─── */}
-          <aside className="space-y-4">
+          <div className="flex w-full min-w-0 flex-col gap-10">
+          <div className="flex w-full min-w-0 flex-col gap-6 xl:flex-row xl:items-start xl:gap-8">
+          {/* ─── LEFT: Cast (~280–320px) ─── */}
+          <aside className="w-full shrink-0 space-y-4 xl:w-[20rem] xl:min-w-[17.5rem] xl:max-w-[20rem]">
             <Panel className="rounded-2xl border border-border bg-card p-4 shadow-soft">
               <div className="flex items-center justify-between">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <Users className="h-4 w-4 text-accent" />
+                <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                  <Users className="h-5 w-5 text-accent" />
                   Detected cast
                 </h2>
                 {speakerGroupsLoading ? (<Spinner className="h-3.5 w-3.5 border-t-accent" />) : (<Badge tone="default">{visibleCastGroups.length} speaker{visibleCastGroups.length === 1 ? "" : "s"}{ignoredLabels.size > 0 ? ` · ${ignoredLabels.size} skipped` : ""}</Badge>)}
@@ -1422,223 +1875,632 @@ export default function UploadMatchPage() {
                 </details>
               ) : null}
             </Panel>
-
-            {/* Re-upload */}
-            <details className="rounded-2xl border border-border bg-card p-3 shadow-soft">
-              <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
-                Upload a new video
-              </summary>
-              <div className="mt-3">
-                <label htmlFor="video-upload-re" className="group flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface-sunken/40 p-4 text-center hover:border-primary/40 hover:bg-primary/5">
-                  <UploadCloud className="h-5 w-5 text-primary" />
-                  <span className="text-xs font-medium text-foreground">{file ? file.name : "Choose file"}</span>
-                  <input id="video-upload-re" type="file" className="hidden" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm,.m4v,.avi" onChange={(e) => { const fnext = e.target.files?.[0] ?? null; setFile(fnext); }} />
-                </label>
-                <button type="button" disabled={busy || isReImporting || !activeProjectId || !file} onClick={() => void startUpload()} className="mt-2 w-full rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
-                  {busy || isReImporting ? "Import in progress..." : "Upload and process"}
-                </button>
-              </div>
-            </details>
-
-            {/* Episode switcher */}
-            {projectEpisodes.length > 0 ? (
-              <div className="rounded-2xl border border-border bg-card p-3 shadow-soft">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Imported videos ({projectEpisodes.length})
-                  {isReImporting ? <span className="ml-1 text-amber-400">+1 importing...</span> : null}
-                </p>
-                <div className="space-y-1">
-                  {projectEpisodes.map((ep) => {
-                    const active = transcriptEpisodeId === ep.id;
-                    const label = ep.title || (ep.source_video_path ? ep.source_video_path.split("/").pop() : null) || ep.id.slice(0, 8);
-                    const date = ep.updated_at ? new Date(ep.updated_at).toLocaleDateString() : "";
-                    return (
-                      <button key={ep.id} type="button" onClick={() => { if (!active) switchToEpisode(ep); }} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs ${active ? "bg-primary/10 font-semibold text-primary ring-1 ring-primary/20" : "text-foreground hover:bg-white/[0.06]"}`}>
-                        <span className="truncate flex-1">{label}</span>
-                        <span className="shrink-0 text-[10px] text-muted-foreground">{date}</span>
-                        {active ? <span className="shrink-0 rounded bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold text-primary">Active</span> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
           </aside>
 
-          {/* ─── RIGHT: Transcript workspace ─── */}
-          <main className="space-y-4">
-            <Panel className="rounded-2xl border border-border bg-card p-4 shadow-soft">
+          {/* CENTER: transcript (flexible width) */}
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col space-y-4">
+            <Panel className="rounded-2xl border border-border bg-card p-5 shadow-soft">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-foreground">Transcript</h2>
-                  <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    {mediaDone?.duration_sec != null ? `${mediaDone.duration_sec.toFixed(0)}s` : ""}
-                    {mediaDone?.transcript_language ? ` · ${spokenLanguageUiLabel(mediaDone.transcript_language)}` : ""}
-                    {transcriptFetchDone ? ` · ${transcriptSegments.length} segments` : ""}
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                    <FileText className="h-5 w-5 text-primary" />
+                    Transcript
+                  </h2>
+                  <p className="mt-1 max-w-md text-sm leading-relaxed text-foreground/85">
+                    Click a line to select it. Edit text, save, and play source audio in the right
+                    panel. You do not need a voice to fix the transcript.
                   </p>
+                  {isHindiTranscriptImport ? (
+                    <div className="mt-4 max-w-xl rounded-xl border border-border bg-surface-sunken/50 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Hindi transcript display
+                      </p>
+                      <div className="mt-2 inline-flex rounded-lg border border-border bg-card p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHindiTranscriptViewMode("devanagari");
+                            if (transcriptEpisodeId) {
+                              try {
+                                window.localStorage.setItem(
+                                  storageKeyForHindiTranscriptView(transcriptEpisodeId),
+                                  "devanagari",
+                                );
+                              } catch {
+                                /* ignore */
+                              }
+                            }
+                            if (selectedTranscriptSegmentId) {
+                              const row = transcriptSegments.find(
+                                (s) => s.segment_id === selectedTranscriptSegmentId,
+                              );
+                              if (row) {
+                                setLineEditorDraft(
+                                  hindiPrimaryDisplayText(row, "devanagari"),
+                                );
+                              }
+                            }
+                          }}
+                          className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
+                            hindiTranscriptViewMode === "devanagari"
+                              ? "bg-primary text-primary-foreground shadow-sm"
+                              : "text-foreground/80 hover:bg-white/[0.06]"
+                          }`}
+                        >
+                          Hindi script
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHindiTranscriptViewMode("roman");
+                            if (transcriptEpisodeId) {
+                              try {
+                                window.localStorage.setItem(
+                                  storageKeyForHindiTranscriptView(transcriptEpisodeId),
+                                  "roman",
+                                );
+                              } catch {
+                                /* ignore */
+                              }
+                            }
+                            if (selectedTranscriptSegmentId) {
+                              const row = transcriptSegments.find(
+                                (s) => s.segment_id === selectedTranscriptSegmentId,
+                              );
+                              if (row) {
+                                setLineEditorDraft(
+                                  hindiPrimaryDisplayText(row, "roman"),
+                                );
+                              }
+                            }
+                          }}
+                          className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
+                            hindiTranscriptViewMode === "roman"
+                              ? "bg-primary text-primary-foreground shadow-sm"
+                              : "text-foreground/80 hover:bg-white/[0.06]"
+                          }`}
+                        >
+                          Roman Hindi (helper)
+                        </button>
+                      </div>
+                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                        Hindi script is the default view when Devanagari exists for a line. Roman
+                        Hindi is an optional readable view of the same line, not a different
+                        transcript.
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {showTranscriptSpinner ? (<Badge tone="accent">Loading…</Badge>) : null}
-                  {anyCharacterHasVoice && transcriptFetchDone && !transcriptError && transcriptSegments.length > 0 ? (
-                    <button type="button" className="rounded-lg bg-primary/90 px-3 py-1.5 text-[11px] font-semibold text-primary-foreground ring-1 ring-primary/30 disabled:opacity-50" disabled={batchLineBusy || generatingSegmentId != null} onClick={() => void generateAllAssignedTranscriptLines()}>
+                  {showTranscriptSpinner ? <Badge tone="accent">Loading…</Badge> : null}
+                  {anyCharacterHasVoice &&
+                  transcriptFetchDone &&
+                  !transcriptError &&
+                  transcriptSegments.length > 0 ? (
+                    <button
+                      type="button"
+                      className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow ring-1 ring-primary/30 transition hover:opacity-95 disabled:opacity-50"
+                      disabled={batchLineBusy || generatingSegmentId != null}
+                      onClick={() => void generateAllAssignedTranscriptLines()}
+                    >
                       {batchLineBusy ? "Batch working…" : "Generate all assigned lines"}
                     </button>
                   ) : null}
                 </div>
               </div>
 
-              {transcriptError ? (<div className="mt-3"><ErrorBanner title="Transcript error" detail={transcriptError} /></div>) : null}
-              {showTranscriptSpinner && !transcriptError ? (<div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"><Spinner className="h-4 w-4 border-t-canvas" />Loading transcript…</div>) : null}
-              {transcriptFetchDone && !transcriptError && transcriptSegments.length === 0 ? (<p className="mt-3 text-sm text-muted-foreground">No transcript segments (silent clip or model returned empty).</p>) : null}
+              {transcriptError ? (
+                <div className="mt-3">
+                  <ErrorBanner title="Transcript error" detail={transcriptError} />
+                </div>
+              ) : null}
+              {showTranscriptSpinner && !transcriptError ? (
+                <div className="mt-4 flex items-center gap-2 text-sm text-foreground">
+                  <Spinner className="h-4 w-4 border-t-canvas" />
+                  Loading transcript…
+                </div>
+              ) : null}
+              {transcriptFetchDone && !transcriptError && transcriptSegments.length === 0 ? (
+                <p className="mt-3 text-sm text-foreground/80">
+                  No transcript segments (silent clip or model returned empty).
+                </p>
+              ) : null}
 
               {transcriptFetchDone && transcriptSegments.length > 0 ? (
-                <ul className="mt-3 max-h-[calc(100vh-280px)] space-y-1 overflow-y-auto rounded-lg bg-white/[0.015] p-1.5 ring-1 ring-white/[0.05]">
+                <ul
+                  ref={lineListRef}
+                  className="mt-4 max-h-[min(72vh,880px)] space-y-2.5 overflow-y-auto rounded-xl border-2 border-border bg-surface-sunken/50 p-4"
+                >
                   {transcriptSegments.map((row) => {
                     const group = speakerGroups.find((g) => g.speaker_label === row.speaker_label);
                     const label = group?.display_name ?? row.speaker_label ?? "Unknown";
-                    const ep = transcriptEpisodeId;
                     const sel = selectedTranscriptSegmentId === row.segment_id;
-                    const segRep = episodeReplacements.find((r) => r.segment_id === row.segment_id);
+                    const pick = charPickBySegment[row.segment_id] ?? "";
+                    const rowRep = episodeReplacements.find(
+                      (r) =>
+                        r.segment_id === row.segment_id &&
+                        (!pick || r.character_id === pick),
+                    );
+                    const hasGen = Boolean(rowRep?.audio_url);
+                    const rowLineText = isHindiTranscriptImport
+                      ? hindiPrimaryDisplayText(row, hindiTranscriptViewMode)
+                      : row.text;
                     return (
-                      <li key={row.segment_id} ref={editSegmentId === row.segment_id ? editRowRef : undefined} className={`rounded-lg text-sm transition ${sel ? "bg-accent/10 ring-1 ring-accent/30" : "hover:bg-white/[0.02]"}`}>
-                        <div className="flex gap-2 px-2.5 py-2">
+                      <li
+                        key={row.segment_id}
+                        id={`seg-${row.segment_id}`}
+                        className={`rounded-xl border-2 text-left transition ${
+                          sel
+                            ? "border-primary bg-primary/20 shadow-md ring-2 ring-primary/60"
+                            : "border-transparent bg-card hover:border-primary/35 hover:bg-card"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          className="flex w-full gap-3 px-4 py-4 text-left"
+                          onClick={() => setSelectedTranscriptSegmentId(row.segment_id)}
+                        >
                           <div className="min-w-0 flex-1">
-                            <button type="button" className="w-full text-left" onClick={() => setSelectedTranscriptSegmentId(row.segment_id)}>
-                              <div className="flex flex-wrap items-baseline gap-2">
-                                <span className="font-mono text-[11px] text-muted-foreground">{formatTimecode(row.start_time)}</span>
-                                <Badge tone={group?.is_narrator ? "violet" : row.speaker_label?.startsWith("SPEAKER_") ? "accent" : "default"}>{label}</Badge>
-                              </div>
-                              <p className="mt-0.5 text-[13px] leading-snug text-foreground">{row.text}</p>
-                            </button>
-                            {segRep?.audio_url ? (
-                              <div className="mt-1.5 flex items-center gap-2">
-                                <audio controls className="h-7 max-w-[200px]" src={mediaUrl(segRep.audio_url.replace(/^\/media\//, ""))} />
-                                <Badge tone="success">Generated</Badge>
-                              </div>
-                            ) : null}
-                          </div>
-                          {ep ? (
-                            <div className="flex shrink-0 flex-col items-end gap-1 self-start">
-                              {/* Play source audio */}
-                              <button type="button" title="Play source audio" className={`flex h-7 w-7 items-center justify-center rounded-md transition ${playingSourceSegId === row.segment_id ? "bg-primary text-primary-foreground" : "bg-white/[0.06] text-muted-foreground ring-1 ring-white/[0.08] hover:bg-white/[0.1] hover:text-foreground"}`} onClick={(e: MouseEvent) => { e.stopPropagation(); playSourceSegment(ep, row.segment_id); }}>
-                                {playingSourceSegId === row.segment_id ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-                              </button>
-                              {anyCharacterHasVoice ? (
-                                <>
-                                  <select className="max-w-[10rem] rounded-md border border-white/[0.1] bg-canvas/80 px-1.5 py-0.5 text-[11px] text-foreground" value={charPickBySegment[row.segment_id] ?? ""} onChange={(e) => { setCharPickBySegment((prev) => ({ ...prev, [row.segment_id]: e.target.value })); }} onClick={(e: MouseEvent) => e.stopPropagation()}>
-                                    <option value="">Character…</option>
-                                    {projectRoster.filter((c) => c.default_voice_id).map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-                                  </select>
-                                  <button type="button" className="rounded-md bg-primary/90 px-2 py-0.5 text-[11px] font-semibold text-primary-foreground ring-1 ring-primary/30 disabled:opacity-50" disabled={generatingSegmentId === row.segment_id || batchLineBusy} onClick={(e: MouseEvent) => { e.stopPropagation(); void generateLineFromTranscript(row.segment_id, row.text); }}>
-                                    {generatingSegmentId === row.segment_id ? "Working…" : "Generate"}
-                                  </button>
-                                  <button type="button" className="rounded-md bg-white/[0.06] px-2 py-0.5 text-[11px] font-medium text-foreground ring-1 ring-white/[0.08] hover:bg-white/[0.1]" onClick={(e: MouseEvent) => { e.stopPropagation(); if (editSegmentId === row.segment_id) { setEditSegmentId(null); setEditSegmentDraft(""); } else { setEditSegmentId(row.segment_id); setEditSegmentDraft(row.text); } }}>
-                                    {editSegmentId === row.segment_id ? "Close" : "Edit"}
-                                  </button>
-                                </>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-mono text-sm font-bold tabular-nums text-foreground">
+                                {formatTimecode(row.start_time)}
+                              </span>
+                              <Badge
+                                tone={
+                                  group?.is_narrator
+                                    ? "violet"
+                                    : row.speaker_label?.startsWith("SPEAKER_")
+                                      ? "accent"
+                                      : "default"
+                                }
+                              >
+                                {label}
+                              </Badge>
+                              {hasGen ? (
+                                <span className="rounded-full bg-emerald-500/25 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-emerald-900 dark:text-emerald-100">
+                                  Audio
+                                </span>
                               ) : null}
-                              <Link href={`/replace-lines?episode=${encodeURIComponent(ep)}&segment=${encodeURIComponent(row.segment_id)}`} className="text-[10px] font-medium text-muted-foreground hover:text-foreground hover:underline" onClick={(e: MouseEvent) => e.stopPropagation()}>
-                                Replace Lines
-                              </Link>
-                              <button type="button" className="text-[10px] font-medium text-red-400/60 hover:text-red-400 hover:underline" onClick={(e: MouseEvent) => { e.stopPropagation(); void handleDeleteSegment(row.segment_id); }}>
-                                Remove
-                              </button>
                             </div>
-                          ) : null}
-                        </div>
-                        {editSegmentId === row.segment_id ? (
-                          <div className="border-t border-white/[0.06] px-2.5 py-2">
-                            <textarea className="w-full rounded-md border border-white/[0.12] bg-canvas/80 px-2 py-1.5 text-[13px] text-foreground" rows={2} value={editSegmentDraft} onChange={(e) => setEditSegmentDraft(e.target.value)} />
-                            <button type="button" className="mt-1.5 rounded-md bg-primary/90 px-3 py-1 text-xs font-semibold text-primary-foreground disabled:opacity-50" disabled={generatingSegmentId === row.segment_id || batchLineBusy} onClick={() => void generateLineFromTranscript(row.segment_id, editSegmentDraft)}>
-                              {generatingSegmentId === row.segment_id ? "Generating…" : "Generate edited line"}
-                            </button>
+                            <p
+                              className={`mt-2 text-lg font-medium leading-relaxed text-foreground ${
+                                isHindiTranscriptImport &&
+                                hindiTranscriptViewMode === "devanagari"
+                                  ? "font-sans"
+                                  : ""
+                              }`}
+                              lang={
+                                isHindiTranscriptImport &&
+                                hindiTranscriptViewMode === "devanagari"
+                                  ? "hi"
+                                  : undefined
+                              }
+                            >
+                              {rowLineText}
+                            </p>
                           </div>
-                        ) : null}
+                        </button>
                       </li>
                     );
                   })}
                 </ul>
               ) : null}
             </Panel>
+          </section>
 
-            {/* Replace Lines CTA */}
-            {transcriptEpisodeId && transcriptSegments.length > 0 ? (
-              <div className={`rounded-xl px-4 py-3 ${anyCharacterHasVoice ? "border border-emerald-500/25 bg-emerald-500/5" : "border border-white/[0.08] bg-white/[0.02]"}`}>
-                {anyCharacterHasVoice ? (
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-foreground">Voices assigned. You can also use the advanced Replace Lines tool.</p>
-                    <Link href={`/replace-lines?episode=${encodeURIComponent(transcriptEpisodeId)}`} className="text-sm font-semibold text-accent underline-offset-4 hover:underline">Open Replace Lines</Link>
+          {/* RIGHT: line inspector (~360–420px; not sticky — avoids overlapping asset strip) */}
+          <aside className="flex w-full min-w-0 shrink-0 flex-col space-y-4 xl:w-[26rem] xl:min-w-[22rem] xl:max-w-[28rem]">
+            {selectedSeg && transcriptEpisodeId ? (
+              <Panel className="rounded-2xl border-2 border-primary/40 bg-primary/[0.08] p-5 shadow-soft ring-1 ring-primary/30">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">
+                      Selected line
+                    </p>
+                    <p className="mt-1 font-mono text-base font-bold text-foreground">
+                      {formatTimecode(selectedSeg.start_time)}
+                      <span className="text-muted-foreground"> → </span>
+                      {formatTimecode(selectedSeg.end_time)}
+                    </p>
                   </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">Assign a voice to a character first. Then generate audio inline or use Replace Lines for advanced editing.</p>
-                )}
+                </div>
+
+                <div className="mt-4 rounded-xl border border-border bg-card px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {isHindiTranscriptImport
+                      ? hindiTranscriptViewMode === "devanagari"
+                        ? "Saved on server (Hindi script — main view)"
+                        : "Saved on server (Roman Hindi — helper view)"
+                      : "Saved on server (read-only snapshot)"}
+                  </p>
+                  <p
+                    className="mt-2 text-base font-medium leading-relaxed text-foreground"
+                    lang={
+                      isHindiTranscriptImport &&
+                      hindiTranscriptViewMode === "devanagari"
+                        ? "hi"
+                        : undefined
+                    }
+                  >
+                    {isHindiTranscriptImport
+                      ? hindiPrimaryDisplayText(selectedSeg, hindiTranscriptViewMode)
+                      : selectedSeg.text}
+                  </p>
+                  {isHindiTranscriptImport ? (
+                    <>
+                      {hindiTranscriptViewMode === "roman" &&
+                      selectedSeg.text_original?.trim() &&
+                      selectedSeg.text_original.trim() !== selectedSeg.text.trim() ? (
+                        <p className="mt-3 border-t border-border pt-2 text-sm leading-relaxed text-foreground/80">
+                          <span className="font-semibold text-foreground">Hindi script (same line):</span>{" "}
+                          <span className="font-sans" lang="hi">
+                            {selectedSeg.text_original}
+                          </span>
+                        </p>
+                      ) : null}
+                      {hindiTranscriptViewMode === "devanagari" &&
+                      selectedSeg.text_original?.trim() &&
+                      selectedSeg.text.trim() !== selectedSeg.text_original.trim() ? (
+                        <p className="mt-3 border-t border-border pt-2 text-sm leading-relaxed text-foreground/80">
+                          <span className="font-semibold text-foreground">
+                            Roman Hindi (helper, same line):
+                          </span>{" "}
+                          {selectedSeg.text}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : selectedSeg.text_original &&
+                    selectedSeg.text_original.trim() !== selectedSeg.text.trim() ? (
+                    <p className="mt-3 border-t border-border pt-2 text-sm italic text-foreground/75">
+                      ASR original: {selectedSeg.text_original}
+                    </p>
+                  ) : null}
+                </div>
+
+                <label className="mt-4 block text-sm font-semibold text-foreground">
+                  Editable text
+                  <textarea
+                    rows={5}
+                    value={lineEditorDraft}
+                    onChange={(e) => setLineEditorDraft(e.target.value)}
+                    lang={isHindiTranscriptImport ? "hi" : undefined}
+                    dir={
+                      isHindiTranscriptImport &&
+                      hindiTranscriptViewMode === "devanagari"
+                        ? "auto"
+                        : "ltr"
+                    }
+                    className={`mt-2 w-full rounded-xl border-2 border-border bg-card px-3 py-3 text-lg leading-relaxed text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/25 ${
+                      isHindiTranscriptImport &&
+                      hindiTranscriptViewMode === "devanagari"
+                        ? "font-sans"
+                        : ""
+                    }`}
+                  />
+                </label>
+                {isHindiTranscriptImport ? (
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    Save text only sends your edit to the server. Hindi lines are normalized like on
+                    import so Roman and Devanagari stay two views of one line: Devanagari is preserved
+                    when you type Hindi script; Roman stays in sync for exports and TTS. English imports
+                    are unchanged.
+                  </p>
+                ) : null}
+
+                <div className="mt-4 flex flex-wrap items-end gap-4">
+                  <label className="block min-w-[12rem] flex-1 text-sm font-semibold text-foreground">
+                    Character
+                    <select
+                      className="mt-1.5 w-full rounded-lg border-2 border-border bg-card px-3 py-2.5 text-base text-foreground outline-none focus:border-primary"
+                      value={charPickBySegment[selectedSeg.segment_id] ?? ""}
+                      onChange={(e) =>
+                        setCharPickBySegment((prev) => ({
+                          ...prev,
+                          [selectedSeg.segment_id]: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">None (transcript only)</option>
+                      {projectRoster.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                          {c.default_voice_id ? "" : " — no voice yet"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block min-w-[10rem] flex-1 text-sm font-semibold text-foreground">
+                    Tone / style (optional)
+                    <input
+                      className="mt-1.5 w-full rounded-lg border-2 border-border bg-card px-3 py-2.5 text-base text-foreground outline-none focus:border-primary"
+                      value={lineEditorTone}
+                      onChange={(e) => setLineEditorTone(e.target.value)}
+                      placeholder="e.g. warm, dry, urgent"
+                    />
+                  </label>
+                </div>
+
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="min-h-11 px-5 text-base font-semibold"
+                    disabled={saveTextBusy}
+                    onClick={() => void saveLineTextOnly()}
+                  >
+                    {saveTextBusy ? "Saving…" : "Save text only"}
+                  </Button>
+                  <Button
+                    type="button"
+                    className="min-h-11 px-5 text-base font-semibold"
+                    disabled={
+                      batchLineBusy ||
+                      generatingSegmentId != null ||
+                      !canGenerateSelectedLine
+                    }
+                    onClick={() =>
+                      void generateLineFromTranscript(
+                        selectedSeg.segment_id,
+                        (lineEditorDraft.trim() || selectedSeg.text).trim(),
+                      )
+                    }
+                  >
+                    {generatingSegmentId === selectedSeg.segment_id
+                      ? lineEditorReplacement?.audio_url
+                        ? "Regenerating…"
+                        : "Generating…"
+                      : lineEditorReplacement?.audio_url
+                        ? "Regenerate audio"
+                        : "Generate audio"}
+                  </Button>
+                </div>
+
+                {!canGenerateSelectedLine && transcriptSegments.length > 0 ? (
+                  <p className="mt-4 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm font-medium text-foreground">
+                    Create a character and attach a voice to generate audio. Transcript editing and
+                    source playback work without a voice.
+                  </p>
+                ) : null}
+
+                <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Playback
+                  </span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="inline-flex min-h-11 items-center gap-2 px-4 text-base font-semibold"
+                    onClick={() => playSourceSegment(transcriptEpisodeId, selectedSeg.segment_id)}
+                  >
+                    {playingSourceSegId === selectedSeg.segment_id ? (
+                      <Pause className="h-5 w-5" />
+                    ) : (
+                      <Play className="h-5 w-5" />
+                    )}
+                    Source
+                  </Button>
+                  {lineEditorReplacement?.audio_url ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="inline-flex min-h-11 items-center gap-2 px-4 text-base font-semibold"
+                      onClick={() => playGeneratedSegment(selectedSeg.segment_id)}
+                    >
+                      {playingGeneratedSegId === selectedSeg.segment_id ? (
+                        <Pause className="h-5 w-5" />
+                      ) : (
+                        <Play className="h-5 w-5" />
+                      )}
+                      Generated
+                    </Button>
+                  ) : (
+                    <span className="text-sm text-foreground/70">
+                      Generated play appears after line audio exists.
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-5 flex flex-wrap items-center gap-5">
+                  <button
+                    type="button"
+                    className="text-base font-semibold text-red-600 hover:underline dark:text-red-400"
+                    onClick={() => void handleDeleteSegment(selectedSeg.segment_id)}
+                  >
+                    Delete line
+                  </button>
+                  <Link
+                    href={`/replace-lines?episode=${encodeURIComponent(transcriptEpisodeId)}&segment=${encodeURIComponent(selectedSeg.segment_id)}`}
+                    className="text-sm font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                  >
+                    Open in Replace Lines (advanced)
+                  </Link>
+                </div>
+              </Panel>
+            ) : (
+              <Panel className="rounded-2xl border border-dashed border-border bg-card/60 p-6 text-center shadow-soft">
+                <p className="text-base font-medium text-foreground">No line selected</p>
+                <p className="mt-2 text-sm leading-relaxed text-foreground/75">
+                  Select a row in the transcript to edit text, save without generating, and play
+                  source audio.
+                </p>
+              </Panel>
+            )}
+
+            {transcriptEpisodeId && transcriptSegments.length > 0 ? (
+              <div className="rounded-xl border border-border bg-surface-sunken/60 px-4 py-3">
+                <p className="text-sm leading-relaxed text-foreground/80">
+                  <span className="font-semibold text-foreground">Replace Lines</span> is for bulk
+                  work and history.{" "}
+                  <Link
+                    href={`/replace-lines?episode=${encodeURIComponent(transcriptEpisodeId)}`}
+                    className="font-semibold text-primary hover:underline"
+                  >
+                    Open Replace Lines
+                  </Link>
+                </p>
               </div>
             ) : null}
+          </aside>
+          </div>
 
-            {/* Frames and downloads */}
-            {mediaDone ? (
-              <Panel className="rounded-2xl border border-border bg-card p-4 shadow-soft">
-                <details open>
-                  <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-foreground [&::-webkit-details-marker]:hidden">
-                    <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform [[open]>&]:rotate-180" />
-                    Frames and downloads
-                  </summary>
-                  <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
-                    {mediaDone.thumbnail_paths.map((rel, i) => (
-                      <div key={rel} className="overflow-hidden rounded-lg ring-1 ring-white/10">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={mediaUrl(rel)} alt={`Frame ${i + 1}`} className="h-20 w-full object-cover" />
-                        <div className="flex flex-col gap-0.5 border-t border-white/[0.06] bg-black/20 px-1.5 py-1">
-                          <a href={mediaUrl(rel)} download={`castweave-frame-${i + 1}.jpg`} className="text-[10px] font-medium text-accent hover:underline">Download</a>
-                          {transcriptEpisodeId && projectRoster.length > 0 ? (
-                            <select
-                              className="w-full rounded border border-white/[0.1] bg-canvas/80 px-0.5 py-0.5 text-[10px] text-foreground disabled:opacity-50"
-                              defaultValue=""
-                              disabled={avatarBusyIndex === i}
-                              onChange={(e) => {
-                                const cid = e.target.value;
-                                if (!cid || !transcriptEpisodeId) return;
-                                if (avatarBusyIndex !== null) { e.target.value = ""; return; }
-                                const selectEl = e.target;
-                                setAvatarBusyIndex(i);
-                                void (async () => {
-                                  try {
-                                    await api.setCharacterAvatarFromEpisodeThumb(cid, { episode_id: transcriptEpisodeId, thumb_index: i });
-                                    toast("Character photo updated");
-                                  } catch {
-                                    toast("Could not update character photo");
-                                  } finally {
-                                    selectEl.value = "";
-                                    setAvatarBusyIndex(null);
-                                  }
-                                })();
-                              }}
-                            >
-                              <option value="">{avatarBusyIndex === i ? "Updating..." : "Use as character photo..."}</option>
-                              {projectRoster.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-                            </select>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))}
+          {/* Bottom asset strip: full width below the 3-column row (no grid/sticky overlap) */}
+          <div className="w-full min-w-0 space-y-6 border-t border-border pt-8">
+            {mediaDone && mediaDone.thumbnail_paths.length > 0 ? (
+              <Panel className="rounded-2xl border-2 border-border bg-card p-5 shadow-soft">
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                      <Film className="h-5 w-5 text-primary" />
+                      Frames from this import
+                    </h2>
+                    <p className="mt-1 text-sm text-foreground/80">
+                      Stills from the active episode. Scroll horizontally on small screens. Assign a
+                      frame as a character photo below.
+                    </p>
                   </div>
-                  {transcriptEpisodeId ? (
-                    <div className="mt-3 flex flex-wrap gap-3 text-[11px] font-medium">
-                      <a href={api.episodeTranscriptExportUrl(transcriptEpisodeId, "txt")} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline"><Download className="h-3 w-3" />Transcript .txt</a>
-                      <a href={api.episodeTranscriptExportUrl(transcriptEpisodeId, "srt")} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline"><Download className="h-3 w-3" />Subtitles .srt</a>
-                      <a href={api.episodeTranscriptExportUrl(transcriptEpisodeId, "vtt")} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline"><Download className="h-3 w-3" />Subtitles .vtt</a>
-                      {activeProjectId && projectClipCount > 0 ? (
-                        <a href={api.projectClipsZipUrl(activeProjectId)} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline"><Download className="h-3 w-3" />All clips .zip ({projectClipCount})</a>
-                      ) : activeProjectId ? (
-                        <span className="text-muted-foreground">No generated clips yet</span>
-                      ) : null}
+                </div>
+                <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
+                  {mediaDone.thumbnail_paths.map((rel, i) => (
+                    <div
+                      key={rel}
+                      className="w-44 shrink-0 snap-start overflow-hidden rounded-xl ring-2 ring-border"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={mediaUrl(rel)}
+                        alt={`Frame ${i + 1}`}
+                        className="h-32 w-full object-cover"
+                      />
+                      <div className="flex flex-col gap-1.5 border-t border-border bg-card px-2 py-2">
+                        <a
+                          href={mediaUrl(rel)}
+                          download={`castweave-frame-${i + 1}.jpg`}
+                          className="text-sm font-semibold text-primary hover:underline"
+                        >
+                          Download
+                        </a>
+                        {transcriptEpisodeId && projectRoster.length > 0 ? (
+                          <select
+                            className="w-full rounded-md border border-border bg-surface px-1 py-1.5 text-xs font-medium text-foreground disabled:opacity-50"
+                            defaultValue=""
+                            disabled={avatarBusyIndex === i}
+                            onChange={(e) => {
+                              const cid = e.target.value;
+                              if (!cid || !transcriptEpisodeId) return;
+                              if (avatarBusyIndex !== null) {
+                                e.target.value = "";
+                                return;
+                              }
+                              const selectEl = e.target;
+                              setAvatarBusyIndex(i);
+                              void (async () => {
+                                try {
+                                  await api.setCharacterAvatarFromEpisodeThumb(cid, {
+                                    episode_id: transcriptEpisodeId,
+                                    thumb_index: i,
+                                  });
+                                  toast("Character photo updated");
+                                } catch {
+                                  toast("Could not update character photo");
+                                } finally {
+                                  selectEl.value = "";
+                                  setAvatarBusyIndex(null);
+                                }
+                              })();
+                            }}
+                          >
+                            <option value="">
+                              {avatarBusyIndex === i ? "Updating…" : "Use as character photo…"}
+                            </option>
+                            {projectRoster.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <p className="text-xs text-foreground/65">Add characters to assign photos.</p>
+                        )}
+                      </div>
                     </div>
-                  ) : null}
-                </details>
+                  ))}
+                </div>
+              </Panel>
+            ) : mediaDone ? (
+              <Panel className="rounded-2xl border border-dashed border-border bg-card/80 p-5 shadow-soft">
+                <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                  <Film className="h-5 w-5 text-muted-foreground" />
+                  Frames
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-foreground/80">
+                  No frame thumbnails were extracted for this import. Re-import the file if you
+                  expected stills here.
+                </p>
               </Panel>
             ) : null}
-          </main>
+
+            <Panel className="rounded-2xl border border-border bg-card p-5 shadow-soft">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                <Layers className="h-5 w-5 text-primary" />
+                Saved line audio & clips
+              </h2>
+              <p className="mt-1 text-sm text-foreground/80">
+                Line audio saved for this episode, plus project clip export.
+              </p>
+              {activeProjectId && projectClipCount > 0 ? (
+                <a
+                  href={api.projectClipsZipUrl(activeProjectId)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 inline-flex items-center gap-2 text-base font-semibold text-primary hover:underline"
+                >
+                  <Package className="h-5 w-5" />
+                  Download all clips .zip ({projectClipCount})
+                </a>
+              ) : (
+                <p className="mt-3 text-sm text-foreground/75">
+                  No project clip bundle yet. Generate line audio or clips from Voice Studio.
+                </p>
+              )}
+              <ul className="mt-4 divide-y divide-border rounded-xl border-2 border-border">
+                {episodeReplacementsForWorkspace.length === 0 ? (
+                  <li className="px-4 py-5 text-base text-foreground/75">
+                    No saved line audio for this episode yet.
+                  </li>
+                ) : (
+                  episodeReplacementsForWorkspace.map((r) => (
+                    <li
+                      key={r.replacement_id}
+                      className="flex flex-wrap items-start justify-between gap-3 px-4 py-4"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-base font-semibold text-foreground">{r.character_name}</p>
+                        <p className="mt-1 line-clamp-2 text-sm text-foreground/80">
+                          {r.replacement_text}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        {r.audio_url ? (
+                          <audio
+                            controls
+                            className="h-9 max-w-[240px]"
+                            src={mediaUrl(r.audio_url.replace(/^\/media\//, ""))}
+                          />
+                        ) : null}
+                        <Link
+                          href={`/replace-lines?episode=${encodeURIComponent(r.episode_id)}&segment=${encodeURIComponent(r.segment_id)}`}
+                          className="inline-flex items-center rounded-lg border-2 border-border bg-surface px-3 py-2 text-sm font-semibold text-foreground hover:bg-white/[0.06]"
+                        >
+                          Advanced
+                        </Link>
+                      </div>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </Panel>
+          </div>
+        </div>
         </div>
       ) : null}
 

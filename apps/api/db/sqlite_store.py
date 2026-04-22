@@ -344,6 +344,12 @@ class SqliteStore:
             if not updates:
                 continue
 
+            log.info(
+                "hindi_renormalize touched episode_id=%s rows=%d",
+                ep_id,
+                len(updates),
+            )
+
             with self._lock:
                 for new_text, _orig, seg_id in updates:
                     self._cx.execute(
@@ -1183,6 +1189,86 @@ class SqliteStore:
                     episode_id,
                 )
         return changed
+
+    def patch_transcript_segment_text(
+        self,
+        episode_id: str,
+        segment_id: str,
+        text: str,
+    ) -> TranscriptSegmentRecord | None:
+        """Save edited transcript line text without TTS.
+
+        English: stores the edited string as ``text`` and clears ``text_original``.
+
+        Hindi: runs ``finalize_segment_fields`` so Roman display + Devanagari
+        ``text_original`` stay aligned (same as import pipeline). Latin-only edits
+        clear ``text_original``.
+        """
+        from services.transcript_text_normalize import (
+            finalize_segment_fields,
+            is_hindi_language,
+            normalize_video_indexer_language,
+        )
+
+        tid = segment_id.strip()
+        new_text = (text or "").strip()
+        if not new_text:
+            return None
+        with self._lock:
+            cur = self._cx.execute(
+                """SELECT * FROM transcript_segments
+                   WHERE episode_id = ? AND segment_id = ? AND COALESCE(deleted, 0) = 0""",
+                (episode_id, tid),
+            )
+            r = cur.fetchone()
+            if not r:
+                return None
+            ep_row = self._cx.execute(
+                "SELECT transcript_language FROM episodes WHERE id = ?",
+                (episode_id,),
+            ).fetchone()
+            lang = normalize_video_indexer_language(
+                ep_row["transcript_language"] if ep_row else None,
+            )
+            if is_hindi_language(lang):
+                disp, orig, _tr = finalize_segment_fields(
+                    episode_language=lang,
+                    raw_text=new_text,
+                )
+                if not disp:
+                    return None
+                text_to_store = disp
+                orig_to_store = orig
+            else:
+                text_to_store = new_text
+                orig_to_store = None
+            self._cx.execute(
+                """UPDATE transcript_segments
+                   SET text = ?, text_original = ?
+                   WHERE episode_id = ? AND segment_id = ?""",
+                (text_to_store, orig_to_store, episode_id, tid),
+            )
+            self._cx.commit()
+            cur2 = self._cx.execute(
+                "SELECT * FROM transcript_segments WHERE episode_id = ? AND segment_id = ?",
+                (episode_id, tid),
+            )
+            row2 = cur2.fetchone()
+        if not row2:
+            return None
+        out = self._row_segment(row2)
+        try:
+            ep = self.get_episode(episode_id)
+            lang = ep.transcript_language if ep else None
+            all_segs = self.list_transcript_segments(episode_id, include_deleted=True)
+            self._persist_transcript_json(episode_id, all_segs, lang)
+        except Exception:
+            log.warning(
+                "patch_transcript_segment_text: failed persist transcript.json episode_id=%s",
+                episode_id,
+            )
+        self.build_speaker_groups(episode_id)
+        return out
 
     def list_transcript_segments(self, episode_id: str, *, include_deleted: bool = False) -> list[TranscriptSegmentRecord]:
         with self._lock:

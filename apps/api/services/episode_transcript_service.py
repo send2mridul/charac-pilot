@@ -26,3 +26,10 @@ def get_transcript(episode_id: str) -> TranscriptOut:
     lang = ep.transcript_language if ep else None
     segs = list_segments(episode_id)
     return TranscriptOut(episode_id=episode_id, language=lang, segments=segs)
+
+
+def patch_segment_text(episode_id: str, segment_id: str, text: str) -> TranscriptSegmentOut:
+    rec = store.patch_transcript_segment_text(episode_id, segment_id, text)
+    if rec is None:
+        raise ValueError("Segment not found")
+    return _to_segment_out(rec)

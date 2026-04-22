@@ -11,7 +11,7 @@ from schemas.episode import EpisodeExportBody
 from schemas.job import JobOut
 from schemas.replacement import PatchReplacementBody, ReplaceSegmentBody, ReplacementOut
 from schemas.speaker_group import SpeakerGroupMergeBody, SpeakerGroupOut, SpeakerGroupRenameBody
-from schemas.transcript import TranscriptOut, TranscriptSegmentOut
+from schemas.transcript import PatchTranscriptSegmentBody, TranscriptOut, TranscriptSegmentOut
 from services import character_service, episode_service, episode_transcript_service, job_service
 from services import replacement_service
 
@@ -146,6 +146,21 @@ def list_episode_transcript_segments(episode_id: str):
     return rows
 
 
+@router.patch("/{episode_id}/segments/{segment_id}", response_model=TranscriptSegmentOut)
+def patch_transcript_segment(episode_id: str, segment_id: str, body: PatchTranscriptSegmentBody):
+    """Update transcript display text only (persists to DB and transcript.json; no audio generation)."""
+    eid = _episode_id(episode_id)
+    sid = segment_id.strip()
+    log.info("PATCH /episodes/%s/segments/%s", eid, sid)
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    if not episode_service.get_episode(eid):
+        raise HTTPException(status_code=404, detail="Episode not found")
+    try:
+        return episode_transcript_service.patch_segment_text(eid, sid, body.text)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
 @router.delete("/{episode_id}/segments/{segment_id}", status_code=204)
 def delete_transcript_segment(episode_id: str, segment_id: str):
     """Soft-delete a transcript segment (hides from exports and UI)."""
@@ -171,18 +186,25 @@ def get_segment_source_audio(episode_id: str, segment_id: str):
     seg = next((s for s in segs if s.segment_id == sid), None)
     if not seg:
         raise HTTPException(status_code=404, detail="Segment not found")
-    audio_rel = ep.extracted_audio_rel
+    audio_rel = ep.extracted_audio_path
     if not audio_rel:
-        raise HTTPException(status_code=404, detail="No extracted audio available")
+        raise HTTPException(
+            status_code=404,
+            detail="No extracted audio for this episode. Re-import the video if you expected source playback.",
+        )
     audio_path = STORAGE_ROOT / audio_rel
     if not audio_path.is_file():
         raise HTTPException(status_code=404, detail="Audio file missing")
+    from services.ffmpeg_bin import get_ffmpeg_paths
+
+    ffmpeg_exe, _ffprobe = get_ffmpeg_paths()
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp.close()
     try:
         subprocess.run(
             [
-                "ffmpeg", "-y",
+                ffmpeg_exe,
+                "-y",
                 "-i", str(audio_path),
                 "-ss", f"{seg.start_time:.3f}",
                 "-to", f"{seg.end_time:.3f}",

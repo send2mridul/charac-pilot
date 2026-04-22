@@ -35,6 +35,15 @@ logger = logging.getLogger(__name__)
 _THUMB_COUNT = 6
 
 
+def _asr_diag_enabled() -> bool:
+    """Verbose ASR/transcript pipeline logging (set CASTWEAVE_ASR_DIAG=1)."""
+    return (os.environ.get("CASTWEAVE_ASR_DIAG") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 def _fail_episode_job(job_id: str, episode_id: str, message: str) -> None:
     """Always persist a terminal failed state when the pipeline cannot complete."""
     msg = (message or "Processing failed").strip()[:500]
@@ -503,6 +512,7 @@ def _run_episode_media_pipeline(
         timer.mark("persist_start")
         _enforce_deadline("before_persist")
         t_persist0 = time.perf_counter()
+        lang_from_whisper = language
         language = normalize_video_indexer_language(language)
         logger.info(
             "episode_media job_id=%s episode_id=%s normalized_language=%s import_provider=%s",
@@ -511,8 +521,30 @@ def _run_episode_media_pipeline(
             language,
             import_provider,
         )
+        raw_asr_preview = [(s.text or "")[:220] for s in t_segments[:10]]
         t_segments = apply_transcript_language_policy(language, t_segments)
         t_segments = drop_obvious_hindi_junk_segments(language, t_segments)
+        final_display_preview = [(s.text or "")[:220] for s in t_segments[:10]]
+        if _asr_diag_enabled():
+            logger.info(
+                "castweave_asr_diag episode_id=%s job_id=%s whisper_lang=%r "
+                "transcript_language_stored=%r detected=%r prob=%r override=%r "
+                "roman_hindi_score=%r roman_hindi_hits=%r forced_hindi=%r low_coverage=%r "
+                "raw_asr_first10=%s display_first10=%s",
+                episode_id,
+                job_id,
+                lang_from_whisper,
+                language,
+                asr_diag.get("detected_language"),
+                asr_diag.get("detected_probability"),
+                asr_diag.get("language_override"),
+                asr_diag.get("roman_hindi_hint_score"),
+                asr_diag.get("roman_hindi_hint_hits"),
+                asr_diag.get("forced_hindi"),
+                asr_diag.get("low_coverage"),
+                raw_asr_preview,
+                final_display_preview,
+            )
         store.set_transcript_for_episode(episode_id, t_segments, language=language)
         logger.info(
             "episode_media job_id=%s transcript rows=%s language=%s",

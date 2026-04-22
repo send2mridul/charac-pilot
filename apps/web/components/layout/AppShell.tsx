@@ -9,7 +9,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
         <div className="relative min-h-0 flex-1 overflow-y-auto bg-background">
-          <div className="relative mx-auto max-w-6xl px-8 py-10 float-in lg:px-12">
+          <div className="relative mx-auto w-full max-w-[min(100vw,1920px)] px-4 py-6 sm:px-6 lg:px-8 xl:px-10 float-in">
             {children}
           </div>
         </div>

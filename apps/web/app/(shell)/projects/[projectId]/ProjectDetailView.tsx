@@ -3,7 +3,15 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Check, Circle, Pencil, Trash2, Volume2, X } from "lucide-react";
+import {
+  Check,
+  Circle,
+  Clapperboard,
+  Pencil,
+  Trash2,
+  Volume2,
+  X,
+} from "lucide-react";
 import { api } from "@/lib/api/client";
 import { mediaUrl } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
@@ -12,6 +20,7 @@ import type {
   EpisodeDto,
   ProjectDto,
   ReplacementDto,
+  VoiceClipDto,
 } from "@/lib/api/types";
 import { useProjects } from "@/components/providers/ProjectProvider";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -57,6 +66,7 @@ export function ProjectDetailView({
   const episodes = initialEpisodes;
   const characters = initialCharacters;
   const [replacements, setReplacements] = useState<ReplacementDto[]>([]);
+  const [voiceClips, setVoiceClips] = useState<VoiceClipDto[]>([]);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState(project.name);
@@ -86,12 +96,47 @@ export function ProjectDetailView({
     };
   }, [project.id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .listProjectClips(project.id)
+      .then((rows) => {
+        if (!cancelled) setVoiceClips(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setVoiceClips([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id]);
+
   const charCount = characters.length;
   const voiced = characters.filter((c) => c.default_voice_id).length;
   const importedEpisodes = episodes.filter((e) => e.segment_count > 0).length;
   const hasSegments = episodes.some((e) => e.segment_count > 0);
   const hasImportedTranscript = importedEpisodes > 0;
   const replacementCount = replacements.length;
+  const transcriptLineTotal = episodes.reduce((acc, e) => acc + (e.segment_count ?? 0), 0);
+  const clipCount = voiceClips.length;
+  const sortedEpisodes = useMemo(
+    () =>
+      [...episodes].sort(
+        (a, b) =>
+          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+      ),
+    [episodes],
+  );
+  const recentReplacements = useMemo(
+    () =>
+      [...replacements]
+        .sort(
+          (a, b) =>
+            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+        )
+        .slice(0, 8),
+    [replacements],
+  );
   const hasReplacementReady = voiced > 0 && hasSegments;
   const workflowStarted = hasImportedTranscript || charCount > 0;
   const replaceStepDone =
@@ -121,7 +166,7 @@ export function ProjectDetailView({
       {
         id: "replace",
         label:
-          "Replace Lines: rewrite lines and save spoken audio (optional without video)",
+          "Replace Lines (optional): advanced history, bulk tools, and precision edits",
         done: replaceStepDone,
         href: "/replace-lines",
       },
@@ -164,7 +209,7 @@ export function ProjectDetailView({
     return {
       title: "Line audio and rewrites",
       body: hasImportedTranscript
-        ? "Use Replace Lines to rewrite transcript lines and save new spoken takes, or generate line audio from the import page."
+        ? "Use Import from Video as the main line editor (save text, generate audio). Replace Lines adds history, bulk tools, and deep edits."
         : "Replace Lines opens when you have an import with transcript lines. For manual projects, Voice Studio clips are your main line audio.",
     };
   }, [nextItem, charCount, voiced, hasImportedTranscript]);
@@ -416,7 +461,7 @@ export function ProjectDetailView({
       <Panel>
         <h2 className="text-sm font-semibold text-text">Production checklist</h2>
         <p className="mt-1 text-sm text-muted">
-          Detected cast lives on the import page. Characters are confirmed roster entries. Voice Studio attaches voices. Transcript lines are from your import. Replace Lines saves new spoken takes into this project.
+          Detected cast and transcript lines live on Import from Video. Characters are confirmed roster entries. Voice Studio attaches voices. Replace Lines is an optional advanced tool for bulk work and line history.
         </p>
         <ul className="mt-4 space-y-2">
           {checklist.map((item) => (
@@ -455,8 +500,7 @@ export function ProjectDetailView({
           </p>
         ) : (
           <p className="mt-4 text-sm text-emerald-400/90">
-            Core workflow complete. Keep iterating in Replace Lines and Voice
-            Studio.
+            Core workflow complete. Keep iterating in Import from Video, Voice Studio, and Replace Lines when you need advanced tools.
           </p>
         )}
       </Panel>
@@ -480,25 +524,28 @@ export function ProjectDetailView({
           </div>
           <div className="rounded-xl bg-white/[0.03] px-4 py-3 ring-1 ring-white/[0.06] transition hover:ring-white/10">
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-              Imported episodes
+              Imports & transcript
             </p>
             <p className="mt-1 text-2xl font-semibold text-text">
-              {episodes.length}
+              {importedEpisodes}/{episodes.length}
             </p>
             <p className="mt-0.5 text-[10px] text-muted">
-              {importedEpisodes} with transcript
+              {transcriptLineTotal} transcript line{transcriptLineTotal === 1 ? "" : "s"} total
             </p>
           </div>
           <div className="rounded-xl bg-white/[0.03] px-4 py-3 ring-1 ring-white/[0.06] transition hover:ring-white/10">
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-              Saved line audio
+              Line audio & clips
             </p>
             <p className="mt-1 text-sm font-medium text-text">
               {replacementCount > 0
-                ? `${replacementCount} replacement${replacementCount === 1 ? "" : "s"}`
+                ? `${replacementCount} saved line${replacementCount === 1 ? "" : "s"}`
                 : hasReplacementReady
-                  ? "None yet"
+                  ? "No saved lines yet"
                   : "Needs voice + import"}
+            </p>
+            <p className="mt-0.5 text-[10px] text-muted">
+              {clipCount} voice clip{clipCount === 1 ? "" : "s"} in Voice Studio
             </p>
           </div>
         </div>
@@ -545,11 +592,19 @@ export function ProjectDetailView({
           <span className="text-xs text-muted">{replacements.length} total</span>
         </div>
         <p className="mt-1 text-sm text-muted">
-          Replacements and regenerated audio from Replace Lines (and quick generate on the import page) stay in this project.
+          Saved line audio from Import from Video or Replace Lines. Open the import workspace to jump straight to a line.
         </p>
         {replacements.length === 0 ? (
           <p className="mt-4 text-sm text-muted">
             None yet. Open{" "}
+            <Link
+              href="/upload-match"
+              className="font-medium text-accent hover:underline"
+              onClick={() => setActiveProjectId(project.id)}
+            >
+              Import from Video
+            </Link>{" "}
+            to generate from the transcript, or use{" "}
             <Link
               href="/replace-lines"
               className="font-medium text-accent hover:underline"
@@ -557,16 +612,19 @@ export function ProjectDetailView({
             >
               Replace Lines
             </Link>{" "}
-            or generate from transcript on Import from Video.
+            for advanced edits.
           </p>
         ) : (
           <ul className="mt-4 divide-y divide-white/[0.06]">
-            {replacements.slice(0, 12).map((r) => (
+            {recentReplacements.map((r) => (
               <li
                 key={r.replacement_id}
                 className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0"
               >
                 <div className="min-w-0">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted">
+                    {formatUpdated(r.updated_at)}
+                  </p>
                   <p className="text-sm font-medium text-text">{r.character_name}</p>
                   {r.original_text ? (
                     <p className="mt-0.5 line-clamp-1 text-[11px] italic text-muted">
@@ -590,32 +648,41 @@ export function ProjectDetailView({
                     Play
                   </button>
                   <Link
+                    href={`/upload-match?episode=${encodeURIComponent(r.episode_id)}`}
+                    className={buttonClass("primary", "px-2.5 py-1 text-xs")}
+                    onClick={() => setActiveProjectId(project.id)}
+                  >
+                    Open workspace
+                  </Link>
+                  <Link
                     href={`/replace-lines?episode=${encodeURIComponent(r.episode_id)}&segment=${encodeURIComponent(r.segment_id)}`}
                     className={buttonClass("secondary", "px-2.5 py-1 text-xs")}
                     onClick={() => setActiveProjectId(project.id)}
                   >
-                    Edit
+                    Advanced
                   </Link>
                 </div>
               </li>
             ))}
           </ul>
         )}
-        {replacements.length > 12 ? (
+        {replacements.length > recentReplacements.length ? (
           <p className="mt-2 text-xs text-muted">
-            Showing 12 most recent. Open Replace Lines to browse by episode.
+            Showing {recentReplacements.length} most recent. Open Replace Lines to browse the full list.
           </p>
         ) : null}
       </Panel>
 
       <Panel>
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-text">Imports</h2>
-          <span className="text-xs text-muted">{episodes.length} total</span>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-text">Imports & media</h2>
+            <p className="mt-1 text-sm text-muted">
+              Each upload is an episode with transcript, cast, and frames. Open the import workspace to continue editing where you left off.
+            </p>
+          </div>
+          <span className="text-xs text-muted">{episodes.length} file{episodes.length === 1 ? "" : "s"}</span>
         </div>
-        <p className="mt-1 text-sm text-muted">
-          Each upload is stored as an episode. When analysis finishes, transcript and cast data are saved automatically. You can return anytime without re-running the import.
-        </p>
         {episodes.length === 0 ? (
           <p className="mt-4 text-sm text-muted">
             No imports yet. Use{" "}
@@ -629,39 +696,73 @@ export function ProjectDetailView({
             to upload a file and build a transcript.
           </p>
         ) : (
-          <ul className="mt-4 divide-y divide-white/[0.06]">
-            {episodes.map((ep) => (
-              <li
-                key={ep.id}
-                className="flex flex-wrap items-center justify-between gap-3 py-4 first:pt-0"
-              >
-                <div>
-                  <p className="text-sm font-medium text-text">{ep.title}</p>
-                  <p className="mt-1 text-xs text-muted">
-                    {ep.segment_count} segments · updated{" "}
-                    {formatUpdated(ep.updated_at)}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone="accent">{ep.status}</Badge>
-                  <Link
-                    href="/replace-lines"
-                    className={buttonClass("outline", "px-3 py-1.5 text-xs")}
-                    onClick={() => setActiveProjectId(project.id)}
-                  >
-                    Replace Lines
-                  </Link>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="!px-2.5 !py-1 !text-xs text-red-600 dark:text-red-400"
-                    onClick={() => void removeEpisodeImport(ep)}
-                  >
-                    Remove import
-                  </Button>
-                </div>
-              </li>
-            ))}
+          <ul className="mt-4 space-y-3">
+            {sortedEpisodes.map((ep) => {
+              const thumb = ep.thumbnail_paths?.[0];
+              const rosterForEp = characters.filter((c) => c.source_episode_id === ep.id).length;
+              const displayTitle =
+                ep.title?.trim() ||
+                (ep.source_video_path ? ep.source_video_path.split(/[/\\]/).pop() : "") ||
+                ep.id.slice(0, 8);
+              return (
+                <li
+                  key={ep.id}
+                  className="flex flex-wrap items-stretch gap-4 rounded-xl bg-white/[0.02] p-3 ring-1 ring-white/[0.08]"
+                >
+                  <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-white/[0.04] ring-1 ring-white/[0.08]">
+                    {thumb ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={mediaUrl(thumb)}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-muted">
+                        <Clapperboard className="h-8 w-8 opacity-40" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-text">{displayTitle}</p>
+                    <p className="mt-1 text-xs text-muted">
+                      {ep.segment_count} transcript lines
+                      {ep.duration_sec != null ? ` · ${Math.round(ep.duration_sec)}s` : ""}
+                      {rosterForEp > 0 ? ` · ${rosterForEp} roster link${rosterForEp === 1 ? "" : "s"}` : ""}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted">
+                      Updated {formatUpdated(ep.updated_at)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-col justify-center gap-2 sm:flex-row sm:items-center">
+                    <Badge tone="accent">{ep.status}</Badge>
+                    <Link
+                      href={`/upload-match?episode=${encodeURIComponent(ep.id)}`}
+                      className={buttonClass("primary", "inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs")}
+                      onClick={() => setActiveProjectId(project.id)}
+                    >
+                      <Clapperboard className="h-3.5 w-3.5" />
+                      Open workspace
+                    </Link>
+                    <Link
+                      href={`/replace-lines?episode=${encodeURIComponent(ep.id)}`}
+                      className={buttonClass("secondary", "px-3 py-2 text-xs")}
+                      onClick={() => setActiveProjectId(project.id)}
+                    >
+                      Replace Lines
+                    </Link>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="!px-2.5 !py-2 !text-xs text-red-600 dark:text-red-400"
+                      onClick={() => void removeEpisodeImport(ep)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Panel>

@@ -19,6 +19,8 @@ export type EpisodeDto = {
   extracted_audio_path?: string | null;
   thumbnail_paths?: string[];
   duration_sec?: number | null;
+  /** Episode spoken / transcript language (e.g. hi, en). */
+  transcript_language?: string | null;
 };
 
 export type CharacterDto = {

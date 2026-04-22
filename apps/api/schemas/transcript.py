@@ -1,4 +1,10 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class PatchTranscriptSegmentBody(BaseModel):
+    """Update stored display text only (no TTS). Clears text_original so Hindi TTS follows edited line."""
+
+    text: str = Field(..., min_length=1)
 
 
 class TranscriptSegmentOut(BaseModel):

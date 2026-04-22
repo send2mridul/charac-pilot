@@ -24,6 +24,32 @@ _HINDI_INITIAL_PROMPT = "हिंदी में बोला गया वी
 
 _HINDI_ADJACENT_LANGS = frozenset({"ur", "mr", "pa", "bn", "ne", "gu", "sd"})
 
+# Roman Hindi / Hinglish cues in Latin script (when Whisper reports "en" but audio is Hindi).
+_ROMAN_HINDI_HINT_RE = re.compile(
+    r"\b(?:"
+    r"hai|hain|nahin|nahi|nahii|kyaa|kya|mera|meri|mere|aapko|aap|humko|hum|"
+    r"yeh|ye|unka|uska|usko|mujhe|raha|rahi|rahe|tha|thi|the|andar|lekin|"
+    r"bas|abhi|phir|fir|kaise|kyun|kabhi|kab|kahan|kahaan|dekho|suno|bolo|"
+    r"accha|acha|theek|thik|zaroor|bahut|kitna|kitni|kitne|waqt|dosto|"
+    r"namaste|dhanyavaad|shukriya|kripya"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _roman_hindi_hint_score(text: str) -> tuple[float, int]:
+    """Returns (hint_hits / word_count, raw_hit_count) using Latin word tokens."""
+    raw = (text or "").strip()
+    if not raw:
+        return 0.0, 0
+    lower = raw.lower()
+    hits = len(_ROMAN_HINDI_HINT_RE.findall(lower))
+    if hits == 0:
+        return 0.0, 0
+    words = re.findall(r"[A-Za-z]+", raw)
+    nwords = max(1, len(words))
+    return hits / float(nwords), hits
+
 
 def _env(name: str, default: str = "") -> str:
     return (os.environ.get(name) or default).strip()
@@ -179,6 +205,7 @@ def transcribe_wav_to_records(
       WHISPER_DEVICE             - cpu | cuda (default: cpu)
       WHISPER_COMPUTE_TYPE       - int8 | float16 (default: int8 on cpu)
       CASTWEAVE_FORCE_HINDI      - 1/true to skip detect and force Hindi
+      CASTWEAVE_ASR_DIAG         - set on API process: log raw vs final transcript lines (see episode_media_worker)
     """
     if not wav_path.is_file():
         raise RuntimeError(f"WAV not found: {wav_path}")
@@ -199,6 +226,7 @@ def transcribe_wav_to_records(
         "retry_triggered": False,
         "final_segments": 0,
         "wav_duration_sec": round(wav_duration, 2),
+        "language_override": None,
     }
 
     # ---- Decide language ----
@@ -210,6 +238,7 @@ def transcribe_wav_to_records(
             "castweave_hindi step=force_env episode_id=%s",
             episode_id,
         )
+        diag["language_override"] = "CASTWEAVE_FORCE_HINDI"
         language = "hi"
     else:
         detect_model_size = _model_size_for_language(None)  # base by default
@@ -246,6 +275,7 @@ def transcribe_wav_to_records(
                 episode_id,
                 language,
             )
+            diag["language_override"] = "devanagari_probe"
             language = "hi"
         elif language in _HINDI_ADJACENT_LANGS and lang_prob < 0.7:
             logger.info(
@@ -254,15 +284,30 @@ def transcribe_wav_to_records(
                 language,
                 lang_prob,
             )
+            diag["language_override"] = "adjacent_lang_low_conf"
             language = "hi"
-        elif language == "en" and lang_prob < 0.5 and len(detect_records) < 5:
-            logger.info(
-                "castweave_hindi step=low_conf_en_override episode_id=%s prob=%.3f segments=%d to=hi",
-                episode_id,
-                lang_prob,
-                len(detect_records),
-            )
-            language = "hi"
+        elif language == "en" and wav_duration >= 1.5:
+            # Whisper often labels Roman-Hindi / Hinglish as "en". Promote only when
+            # detect-pass text shows strong Roman Hindi cues — avoids the old blanket
+            # low-confidence English→Hindi rule that broke short English clips.
+            rh_score, rh_hits = _roman_hindi_hint_score(early_text)
+            diag["roman_hindi_hint_score"] = round(rh_score, 4)
+            diag["roman_hindi_hint_hits"] = rh_hits
+            uncertain = lang_prob < 0.82
+            strong = rh_hits >= 3 and rh_score >= 0.04
+            moderate = rh_hits >= 2 and rh_score >= 0.07 and wav_duration >= 4.0
+            if uncertain and (strong or moderate):
+                logger.info(
+                    "castweave_hindi step=roman_hindi_probe episode_id=%s "
+                    "detected=en prob=%.3f hits=%d score=%.4f duration=%.1f to=hi",
+                    episode_id,
+                    lang_prob,
+                    rh_hits,
+                    rh_score,
+                    wav_duration,
+                )
+                diag["language_override"] = "roman_hindi_probe"
+                language = "hi"
 
     # ---- Main pass ----
     if language == "hi":

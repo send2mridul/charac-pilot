@@ -260,6 +260,20 @@ export const api = {
   segmentSourceAudioUrl: (episodeId: string, segmentId: string): string =>
     `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/segments/${encodeURIComponent(segmentId)}/audio`,
 
+  patchTranscriptSegmentText: (
+    episodeId: string,
+    segmentId: string,
+    body: { text: string },
+  ) =>
+    requestJson<TranscriptSegmentDto>(
+      `/episodes/${encodeURIComponent(episodeId)}/segments/${encodeURIComponent(segmentId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
   deleteTranscriptSegment: async (episodeId: string, segmentId: string): Promise<void> => {
     const res = await fetch(
       `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/segments/${encodeURIComponent(segmentId)}`,
