@@ -46,7 +46,7 @@ export function navTitleForPath(pathname: string): string {
   if (pathname === "/replace-lines" || pathname === "/scene-replace") {
     return "Replace Lines";
   }
-  return "CastVoice";
+  return "CastWeave";
 }
 
-export const APP_BRAND = "CastVoice";
+export const APP_BRAND = "CastWeave";

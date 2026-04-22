@@ -192,9 +192,9 @@ export type EpisodeMediaJobResult = {
   transcript_segment_count?: number;
   transcript_language?: string | null;
   speaker_count?: number;
-  /** azure_video_indexer | local */
+  /** Internal route id for how analysis ran (not shown verbatim in UI). */
   import_provider?: string;
-  /** When import used local path, why Azure was skipped or failed (no secrets). */
+  /** When analysis used the on-device path, short neutral note (e.g. why cloud analysis was not used). */
   fallback_reason?: string | null;
 };
 

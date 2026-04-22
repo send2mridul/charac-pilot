@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 
 from db.store import store
 from schemas.character import CharacterOut, CreateCharacterFromGroupBody
@@ -26,6 +27,35 @@ def _replacement_http_error(exc: ValueError) -> None:
     raise HTTPException(status_code=code, detail=msg) from exc
 
 
+def _fmt_srt_time(sec: float) -> str:
+    sec = max(0.0, float(sec))
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = sec - h * 3600 - m * 60
+    whole = int(s)
+    frac = s - whole
+    ms = int(round(frac * 1000))
+    if ms >= 1000:
+        ms = 999
+    return f"{h:02d}:{m:02d}:{whole:02d},{ms:03d}"
+
+
+def _fmt_vtt_time(sec: float) -> str:
+    sec = max(0.0, float(sec))
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = sec - h * 3600 - m * 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}"
+
+
+def _load_segments_for_export(episode_id: str):
+    eid = _episode_id(episode_id)
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    if not episode_service.get_episode(eid):
+        raise HTTPException(status_code=404, detail="Episode not found")
+    return episode_transcript_service.list_segments(eid)
+
+
 @router.get("/{episode_id}/transcript", response_model=TranscriptOut)
 def get_episode_transcript(episode_id: str):
     eid = _episode_id(episode_id)
@@ -46,6 +76,54 @@ def get_episode_transcript(episode_id: str):
         out.language,
     )
     return out
+
+
+@router.get("/{episode_id}/transcript/export.txt", response_class=PlainTextResponse)
+def export_episode_transcript_txt(episode_id: str):
+    rows = _load_segments_for_export(episode_id)
+    lines: list[str] = []
+    for seg in rows:
+        spk = (seg.speaker_label or "").strip() or "?"
+        lines.append(f"[{seg.start_time:.2f}s] {spk}: {seg.text}")
+    body = "\n".join(lines) if lines else ""
+    return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
+
+
+@router.get("/{episode_id}/transcript/export.srt", response_class=PlainTextResponse)
+def export_episode_transcript_srt(episode_id: str):
+    rows = _load_segments_for_export(episode_id)
+    blocks: list[str] = []
+    for i, seg in enumerate(rows, start=1):
+        spk = (seg.speaker_label or "").strip() or "?"
+        line = f"{spk}: {seg.text}".strip()
+        blocks.append(
+            f"{i}\n{_fmt_srt_time(seg.start_time)} --> {_fmt_srt_time(seg.end_time)}\n{line}\n",
+        )
+    body = "\n".join(blocks)
+    return PlainTextResponse(body, media_type="application/x-subrip; charset=utf-8")
+
+
+@router.get("/{episode_id}/transcript/export.vtt", response_class=PlainTextResponse)
+def export_episode_transcript_vtt(episode_id: str):
+    rows = _load_segments_for_export(episode_id)
+    lines_vtt = ["WEBVTT", ""]
+    for seg in rows:
+        spk = (seg.speaker_label or "").strip() or "?"
+        line = f"{spk}: {seg.text}".strip()
+        lines_vtt.append(
+            f"{_fmt_vtt_time(seg.start_time)} --> {_fmt_vtt_time(seg.end_time)}\n{line}\n",
+        )
+    body = "\n".join(lines_vtt)
+    return PlainTextResponse(body, media_type="text/vtt; charset=utf-8")
+
+
+@router.delete("/{episode_id}", status_code=204)
+def delete_episode(episode_id: str):
+    eid = _episode_id(episode_id)
+    log.info("DELETE /episodes/%s", eid)
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    if not store.delete_episode(eid):
+        raise HTTPException(status_code=404, detail="Episode not found")
 
 
 @router.get("/{episode_id}/segments", response_model=list[TranscriptSegmentOut])

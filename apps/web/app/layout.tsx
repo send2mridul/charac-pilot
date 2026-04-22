@@ -18,8 +18,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CastVoice",
-  description: "Character continuity and media cockpit",
+  title: { default: "CastWeave", template: "%s · CastWeave" },
+  description:
+    "Import video, confirm cast, attach voices, and replace lines—in one guided workflow.",
+  icons: { icon: "/castweave-icon.svg" },
 };
 
 export default function RootLayout({

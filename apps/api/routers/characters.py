@@ -6,6 +6,7 @@ import zipfile
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from db.store import store
 from schemas.character import (
@@ -36,6 +37,11 @@ from storage_paths import STORAGE_ROOT, ensure_storage_dirs, to_rel_storage_path
 
 router = APIRouter()
 log = logging.getLogger("characpilot.characters")
+
+
+class AvatarFromEpisodeThumbBody(BaseModel):
+    episode_id: str = Field(..., min_length=1)
+    thumb_index: int = Field(ge=0, le=11)
 
 
 def _generate_and_store_clips(
@@ -334,7 +340,6 @@ def generate_clips_endpoint(character_id: str, body: GenerateClipsBody):
     if not created:
         raise HTTPException(status_code=500, detail="Could not generate clips")
 
-    character_service.update_character(character_id, preview_audio_path=created[-1].audio_url)
     return GenerateClipsOut(
         character_id=character_id,
         mode=mode,
@@ -370,7 +375,6 @@ def generate_clips_from_lines_endpoint(character_id: str, body: GenerateClipsFro
     if not created:
         raise HTTPException(status_code=500, detail="Could not generate clips")
 
-    character_service.update_character(character_id, preview_audio_path=created[-1].audio_url)
     return GenerateClipsOut(
         character_id=character_id,
         mode="reviewed_lines",
@@ -378,6 +382,60 @@ def generate_clips_from_lines_endpoint(character_id: str, body: GenerateClipsFro
         generated_count=len(created),
         clips=created,
     )
+
+
+@router.post("/{character_id}/avatar-from-episode-thumb", response_model=CharacterOut)
+def avatar_from_episode_thumbnail(character_id: str, body: AvatarFromEpisodeThumbBody):
+    """Copy a saved episode frame into this character's avatar image."""
+    from services import episode_service
+
+    c = character_service.get_character(character_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Character not found")
+    eid = body.episode_id.strip()
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    ep = store.get_episode(eid)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    if ep.project_id != c.project_id:
+        raise HTTPException(status_code=400, detail="Episode is not in this character's project")
+    thumbs = [t for t in (ep.thumbnail_rels or []) if t]
+    if body.thumb_index >= len(thumbs):
+        raise HTTPException(status_code=400, detail="Thumbnail index out of range")
+    rel = thumbs[body.thumb_index]
+    src = (STORAGE_ROOT / rel).resolve()
+    if not src.is_file():
+        raise HTTPException(status_code=404, detail="Thumbnail file missing")
+    ensure_storage_dirs()
+    dest_dir = STORAGE_ROOT / "avatars" / character_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    suffix = src.suffix.lower() if src.suffix else ".jpg"
+    if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        suffix = ".jpg"
+    dest = dest_dir / f"avatar{suffix}"
+    try:
+        shutil.copy2(src, dest)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not copy image: {e}") from e
+    out_rel = to_rel_storage_path(dest)
+    updated = character_service.update_character(character_id, thumbnail_paths=[out_rel])
+    if not updated:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return updated
+
+
+@router.post("/{character_id}/clear-voice", response_model=CharacterOut)
+def clear_attached_voice(character_id: str):
+    updated = character_service.clear_character_voice(character_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return updated
+
+
+@router.delete("/{character_id}", status_code=204)
+def remove_character(character_id: str):
+    if not character_service.delete_character(character_id):
+        raise HTTPException(status_code=404, detail="Character not found")
 
 
 @router.patch("/{character_id}", response_model=CharacterOut)

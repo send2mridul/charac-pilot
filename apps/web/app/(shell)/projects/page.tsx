@@ -9,7 +9,6 @@ import {
   FolderKanban,
   MoreHorizontal,
   Plus,
-  Sparkles,
   X,
 } from "lucide-react";
 import { api } from "@/lib/api/client";
@@ -90,6 +89,8 @@ export default function ProjectsPage() {
   const [statsByProject, setStatsByProject] = useState<Record<string, ProjStats>>(
     {},
   );
+  const [openMenuProjectId, setOpenMenuProjectId] = useState<string | null>(null);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     if (projects.length === 0) {
@@ -118,6 +119,19 @@ export default function ProjectsPage() {
     };
   }, [projects]);
 
+  useEffect(() => {
+    if (!openMenuProjectId) return;
+    function onPointerDown(ev: MouseEvent) {
+      const el = (ev.target as HTMLElement | null)?.closest?.(
+        "[data-project-menu-root]",
+      );
+      if (el) return;
+      setOpenMenuProjectId(null);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [openMenuProjectId]);
+
   async function onCreate() {
     if (!newName.trim()) return;
     setCreating(true);
@@ -143,6 +157,27 @@ export default function ProjectsPage() {
     }
   }
 
+  async function onDeleteProject(projectId: string, projectName: string) {
+    if (
+      !globalThis.confirm(
+        `Delete “${projectName}” and all of its characters, episodes, and metadata on this machine?`,
+      )
+    ) {
+      return;
+    }
+    setDeletingProjectId(projectId);
+    setOpenMenuProjectId(null);
+    try {
+      await api.deleteProject(projectId);
+      await refresh();
+      router.push("/projects");
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDeletingProjectId(null);
+    }
+  }
+
   const activeCount = projects.filter((p) => p.status === "active").length;
 
   return (
@@ -157,7 +192,7 @@ export default function ProjectsPage() {
             Projects
           </h1>
           <p className="mt-3 max-w-md text-[15px] leading-relaxed text-muted-foreground">
-            One path: import footage, confirm the cast, attach voices, generate clips, then replace lines for the final mix.
+            Open a project to run the workflow: import video, roster your cast in Characters, attach voices, then replace lines.
           </p>
         </div>
 
@@ -257,60 +292,15 @@ export default function ProjectsPage() {
         <EmptyState
           icon={FolderKanban}
           title="No projects yet"
-          description="Create a production, then either import video to detect your cast or add characters by hand."
+          description="Create a project first. Inside the project you can import video or add characters manually."
           action={
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <Link
-                href="/upload-match"
-                className="inline-flex h-11 items-center gap-2 rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-foreground shadow-soft transition hover:border-foreground hover:bg-foreground hover:text-background"
-              >
-                Start from video
-              </Link>
-              <Button type="button" onClick={() => setModalOpen(true)}>
-                New project (manual)
-              </Button>
-            </div>
+            <Button type="button" onClick={() => setModalOpen(true)}>
+              New project
+            </Button>
           }
         />
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-4 pb-6 md:grid-cols-2">
-            <Link
-              href="/upload-match"
-              className="group relative overflow-hidden rounded-2xl border-2 border-primary/35 bg-gradient-to-br from-primary/15 via-surface to-surface p-6 text-left shadow-soft transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-lifted"
-            >
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-glow">
-                <Film className="h-5 w-5" strokeWidth={2.25} />
-              </span>
-              <div className="mt-4">
-                <div className="font-display text-lg font-semibold text-foreground">
-                  Start from video
-                </div>
-                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                  Import a clip, get a transcript, review detected cast, then turn voices into characters.
-                </p>
-              </div>
-              <ArrowUpRight className="absolute right-5 top-5 h-4 w-4 text-primary transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-            </Link>
-            <button
-              type="button"
-              onClick={() => setModalOpen(true)}
-              className="group flex flex-col rounded-2xl border border-border bg-surface p-6 text-left transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-md"
-            >
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-sunken text-foreground ring-1 ring-border">
-                <Sparkles className="h-5 w-5" strokeWidth={2.25} />
-              </span>
-              <div className="mt-4">
-                <div className="font-display text-lg font-semibold text-foreground">
-                  Start manually
-                </div>
-                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                  Create a project and add characters yourself. You can import footage later anytime.
-                </p>
-              </div>
-            </button>
-          </div>
-
           <div className="flex items-end justify-between pb-5">
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -352,13 +342,63 @@ export default function ProjectsPage() {
                           </div>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-surface-sunken hover:text-foreground"
-                        aria-label="Project actions"
+                      <div
+                        className="relative z-20 shrink-0"
+                        data-project-menu-root
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </button>
+                        <button
+                          type="button"
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-surface-sunken hover:text-foreground aria-expanded:ring-2 aria-expanded:ring-primary/25"
+                          aria-label="Project actions"
+                          aria-expanded={openMenuProjectId === p.id}
+                          aria-haspopup="menu"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setOpenMenuProjectId((id) =>
+                              id === p.id ? null : p.id,
+                            );
+                          }}
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </button>
+                        {openMenuProjectId === p.id ? (
+                          <div
+                            role="menu"
+                            className="absolute right-0 top-full z-50 mt-1 min-w-[11rem] rounded-xl border border-border bg-surface py-1 shadow-lifted"
+                          >
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-surface-sunken"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenMenuProjectId(null);
+                                setActiveProjectId(p.id);
+                                router.push(`/projects/${p.id}`);
+                              }}
+                            >
+                              Open project
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              disabled={deletingProjectId === p.id}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-500/10 disabled:opacity-50"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void onDeleteProject(p.id, p.name);
+                              }}
+                            >
+                              {deletingProjectId === p.id ? (
+                                <Spinner className="h-4 w-4 border-t-red-600" />
+                              ) : null}
+                              Delete project
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
 
                     <div className="mt-5 flex flex-wrap items-center gap-2">
@@ -374,15 +414,17 @@ export default function ProjectsPage() {
                           Characters
                         </div>
                         <div className="mt-1 font-mono text-xl font-semibold text-foreground">
-                          {statsByProject[p.id]?.total ?? "—"}
+                          {statsByProject[p.id]?.total ?? "…"}
                         </div>
                       </div>
                       <div>
                         <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          Scenes
+                          Voices assigned
                         </div>
                         <div className="mt-1 font-mono text-xl font-semibold text-foreground">
-                          {p.scene_count}
+                          {statsByProject[p.id]
+                            ? `${statsByProject[p.id]!.voiced}/${statsByProject[p.id]!.total}`
+                            : "…"}
                         </div>
                       </div>
                     </div>
@@ -418,7 +460,7 @@ export default function ProjectsPage() {
       )}
 
       <footer className="mt-16 border-t border-border pt-6 text-center text-[11px] text-muted-foreground">
-        CastVoice · A studio for crafting voices.
+        CastWeave · Video to cast, voice, and lines.
       </footer>
     </div>
   );

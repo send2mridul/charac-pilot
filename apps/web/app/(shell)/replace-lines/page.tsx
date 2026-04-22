@@ -276,9 +276,6 @@ function ReplaceLinesContent() {
               ))
             )}
           </select>
-          {active ? (
-            <span className="text-xs text-muted">{active.scene_count} scenes</span>
-          ) : null}
         </div>
       </Panel>
 
@@ -521,7 +518,9 @@ function ReplaceLinesContent() {
                       <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted">
                         <span>Voice: {r.selected_voice_name}</span>
                         <Badge tone={r.fallback_used ? "default" : "success"}>
-                          {r.fallback_used ? "fallback audio" : r.provider_used}
+                          {r.fallback_used
+                            ? "On-device speech"
+                            : "Standard speech engine"}
                         </Badge>
                       </div>
                     </div>

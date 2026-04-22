@@ -1,4 +1,4 @@
-"""CastVoice API entrypoint (CharacPilot codebase)."""
+"""CastWeave API entrypoint (CharacPilot codebase)."""
 
 import logging
 import sys
@@ -146,9 +146,9 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="CastVoice API",
+    title="CastWeave API",
     version="0.1.0",
-    description="CastVoice API. SQLite metadata and local media under /media.",
+    description="CastWeave API. SQLite metadata and local media under /media.",
     lifespan=lifespan,
 )
 

@@ -79,9 +79,9 @@ def storage_account_name() -> str:
 
 def poll_interval_sec() -> float:
     try:
-        return max(3.0, float(_env("AZURE_VIDEO_INDEXER_POLL_INTERVAL_SEC", "10")))
+        return max(2.0, float(_env("AZURE_VIDEO_INDEXER_POLL_INTERVAL_SEC", "5")))
     except ValueError:
-        return 10.0
+        return 5.0
 
 
 def poll_timeout_sec() -> float:

@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent,
@@ -37,7 +38,6 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Panel } from "@/components/ui/Panel";
-import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Spinner } from "@/components/ui/Spinner";
 
 /** Polling interval while job.status is queued or running. */
@@ -119,6 +119,54 @@ function speakerRowDomId(label: string): string {
 }
 
 type Phase = "idle" | "uploading" | "processing" | "done" | "failed";
+
+const PIPELINE_STEPS = [
+  "Uploading video",
+  "Extracting audio",
+  "Analyzing speech",
+  "Detecting cast",
+  "Building transcript",
+  "Preparing characters",
+] as const;
+
+const PIPELINE_ICONS = [
+  FileVideo,
+  Volume2,
+  Mic2,
+  Users,
+  FileText,
+  UserPlus,
+] as const;
+
+function inferPipelineStep(phase: Phase, job: JobDto | null): number {
+  if (phase === "uploading") return 0;
+  if (phase !== "processing") return PIPELINE_STEPS.length - 1;
+  const m = (job?.message || "").toLowerCase();
+  const p = typeof job?.progress === "number" ? job.progress : 0;
+  if (m.includes("detecting speaker")) return 3;
+  if (m.includes("building transcript") || m.includes("cast candidate")) return 4;
+  if (
+    m.includes("reading") ||
+    m.includes("extract") ||
+    m.includes("preview frame") ||
+    p < 0.46
+  ) {
+    return 1;
+  }
+  if (
+    m.includes("transcrib") ||
+    m.includes("analysis") ||
+    m.includes("connecting") ||
+    m.includes("on-device") ||
+    m.includes("cloud") ||
+    p < 0.78
+  ) {
+    return 2;
+  }
+  if (p < 0.88) return 3;
+  if (p < 0.99) return 4;
+  return 5;
+}
 type PersistedImportContext = {
   media: EpisodeMediaJobResult;
 };
@@ -162,54 +210,82 @@ export default function UploadMatchPage() {
   const [mergeTargetFor, setMergeTargetFor] = useState<Record<string, string>>(
     {},
   );
-  /** Project roster — used to know if any character has a voice (Replace Lines gating). */
+  /** Project roster: used to know if any character has a voice (Replace Lines gating). */
   const [projectRoster, setProjectRoster] = useState<CharacterDto[]>([]);
+  const uploadSessionRef = useRef(0);
+  const progressTrustRef = useRef({
+    lastP: -1,
+    lastMoveAt: 0,
+    lastMsg: "",
+    lastUpd: "",
+  });
+  const [importBootKind, setImportBootKind] = useState<
+    "none" | "restored" | "fresh"
+  >("none");
+  const [processingTrust, setProcessingTrust] = useState({
+    determinate: true,
+    longWait: false,
+    severeStall: false,
+  });
 
   const storageKey = activeProjectId
+    ? `castweave:import-context:${activeProjectId}`
+    : null;
+  const legacyStorageKey = activeProjectId
     ? `castvoice:import-context:${activeProjectId}`
     : null;
 
-  const pollJob = useCallback(async (jobId: string, startedAt = Date.now()) => {
-    try {
-      const j = await api.getJob(jobId);
-      setJob(j);
-      const st = normalizeJobStatus(j.status);
-      if (st === "queued" || st === "running") {
-        if (Date.now() - startedAt > JOB_POLL_MAX_MS) {
-          setPhase("failed");
-          setError(
-            "Timed out waiting for processing (job stayed queued or running). Check the API logs or try again.",
+  const pollJob = useCallback(
+    async (jobId: string, startedAt = Date.now(), sessionId?: number) => {
+      const sid = sessionId ?? uploadSessionRef.current;
+      try {
+        const j = await api.getJob(jobId);
+        if (sid !== uploadSessionRef.current) return;
+        setJob(j);
+        const st = normalizeJobStatus(j.status);
+        if (st === "queued" || st === "running") {
+          if (Date.now() - startedAt > JOB_POLL_MAX_MS) {
+            setPhase("failed");
+            setError(
+              "Timed out waiting for processing (job stayed queued or running). Check the API logs or try again.",
+            );
+            return;
+          }
+          window.setTimeout(
+            () => void pollJob(jobId, startedAt, sid),
+            JOB_POLL_INTERVAL_MS,
           );
           return;
         }
-        window.setTimeout(
-          () => void pollJob(jobId, startedAt),
-          JOB_POLL_INTERVAL_MS,
-        );
-        return;
-      }
-      if (st === "failed") {
+        if (st === "failed") {
+          setPhase("failed");
+          return;
+        }
+        if (st === "done") {
+          setPhase("done");
+          setImportBootKind("none");
+          return;
+        }
         setPhase("failed");
-        return;
+        setError(
+          `Unexpected job status from server: ${String(j.status ?? "").slice(0, 120)}`,
+        );
+      } catch (e) {
+        if (sid !== uploadSessionRef.current) return;
+        setPhase("failed");
+        setError(
+          e instanceof ApiError ? e.message : "Could not load job status",
+        );
       }
-      if (st === "done") {
-        setPhase("done");
-        return;
-      }
-      setPhase("failed");
-      setError(
-        `Unexpected job status from server: ${String(j.status ?? "").slice(0, 120)}`,
-      );
-    } catch (e) {
-      setPhase("failed");
-      setError(
-        e instanceof ApiError ? e.message : "Could not load job status",
-      );
-    }
-  }, []);
+    },
+    [],
+  );
 
   async function startUpload() {
     if (!activeProjectId || !file) return;
+    uploadSessionRef.current += 1;
+    const sessionId = uploadSessionRef.current;
+    setImportBootKind("fresh");
     setBusy(true);
     setError(null);
     setJob(null);
@@ -232,7 +308,7 @@ export default function UploadMatchPage() {
         (r) => setUploadRatio(r),
       );
       setPhase("processing");
-      await pollJob(res.job_id);
+      await pollJob(res.job_id, Date.now(), sessionId);
     } catch (e) {
       setPhase("idle");
       setError(e instanceof ApiError ? e.message : "Upload failed");
@@ -249,6 +325,9 @@ export default function UploadMatchPage() {
   const transcriptEpisodeId = resolveEpisodeIdForTranscript(job, mediaDone);
 
   const ignoredStorageKey = transcriptEpisodeId
+    ? `castweave:ignored-cast:${transcriptEpisodeId}`
+    : null;
+  const legacyIgnoredStorageKey = transcriptEpisodeId
     ? `castvoice:ignored-cast:${transcriptEpisodeId}`
     : null;
 
@@ -259,15 +338,26 @@ export default function UploadMatchPage() {
   useEffect(() => {
     if (!ignoredStorageKey) return;
     try {
-      const raw = window.localStorage.getItem(ignoredStorageKey);
+      const raw =
+        window.localStorage.getItem(ignoredStorageKey) ??
+        (legacyIgnoredStorageKey
+          ? window.localStorage.getItem(legacyIgnoredStorageKey)
+          : null);
       if (!raw) return;
       const arr = JSON.parse(raw) as unknown;
       if (!Array.isArray(arr)) return;
       setIgnoredLabels(new Set(arr.filter((x) => typeof x === "string")));
+      if (legacyIgnoredStorageKey) {
+        try {
+          window.localStorage.removeItem(legacyIgnoredStorageKey);
+        } catch {
+          /* ignore */
+        }
+      }
     } catch {
       /* ignore */
     }
-  }, [ignoredStorageKey]);
+  }, [ignoredStorageKey, legacyIgnoredStorageKey]);
 
   useEffect(() => {
     if (!ignoredStorageKey) return;
@@ -295,16 +385,87 @@ export default function UploadMatchPage() {
   useEffect(() => {
     if (!storageKey) return;
     try {
-      const raw = window.localStorage.getItem(storageKey);
+      const raw =
+        window.localStorage.getItem(storageKey) ??
+        (legacyStorageKey ? window.localStorage.getItem(legacyStorageKey) : null);
       if (!raw) return;
       const parsed = JSON.parse(raw) as PersistedImportContext;
       if (!parsed?.media?.episode_id) return;
       setPersistedMedia(parsed.media);
+      setImportBootKind("restored");
       setPhase("done");
+      if (legacyStorageKey) {
+        try {
+          window.localStorage.removeItem(legacyStorageKey);
+        } catch {
+          /* ignore */
+        }
+      }
     } catch {
       /* ignore invalid local data */
     }
-  }, [storageKey]);
+  }, [storageKey, legacyStorageKey]);
+
+  useEffect(() => {
+    if (phase !== "processing") return;
+    progressTrustRef.current = {
+      lastP: -1,
+      lastMoveAt: Date.now(),
+      lastMsg: "",
+      lastUpd: "",
+    };
+    setProcessingTrust({
+      determinate: true,
+      longWait: false,
+      severeStall: false,
+    });
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "processing" || !job) return;
+    const st = normalizeJobStatus(job.status);
+    if (st !== "running" && st !== "queued") return;
+
+    const now = Date.now();
+    const r = progressTrustRef.current;
+    const p = Number(job.progress) || 0;
+    const msg = job.message || "";
+    const upd = job.updated_at || "";
+
+    if (r.lastUpd === "" && r.lastMoveAt === 0) {
+      r.lastMoveAt = now;
+    }
+    if (upd !== r.lastUpd || msg !== r.lastMsg) {
+      r.lastMoveAt = now;
+      r.lastMsg = msg;
+      r.lastUpd = upd;
+    }
+    if (r.lastP < 0) r.lastP = p;
+    if (Math.abs(p - r.lastP) > 0.004) {
+      r.lastP = p;
+      r.lastMoveAt = now;
+    }
+
+    const idleMs = now - r.lastMoveAt;
+    const updatedAtMs = Date.parse(job.updated_at);
+    const sinceServerUpdate =
+      Number.isFinite(updatedAtMs) && updatedAtMs > 0 ? now - updatedAtMs : 0;
+
+    const determinate = idleMs < 90_000;
+    const longWait = idleMs > 45_000;
+    const severeStall = sinceServerUpdate > 240_000;
+
+    setProcessingTrust((prev) => {
+      if (
+        prev.determinate === determinate &&
+        prev.longWait === longWait &&
+        prev.severeStall === severeStall
+      ) {
+        return prev;
+      }
+      return { determinate, longWait, severeStall };
+    });
+  }, [job, phase]);
 
   useEffect(() => {
     if (!storageKey || !mediaDone) return;
@@ -503,27 +664,26 @@ export default function UploadMatchPage() {
   const showTranscriptSpinner =
     (!transcriptFetchDone && !transcriptError) || transcriptLoading;
 
-  const displayProgress =
-    phase === "uploading"
-      ? uploadRatio
-      : job?.progress != null
-        ? job.progress
-        : 0;
-
-  let pipelineActive = 0;
-  if (phase === "uploading") pipelineActive = 0;
-  else if (phase === "processing") pipelineActive = 1;
-  else if (phase === "done") {
-    if (transcriptLoading || (!transcriptFetchDone && !transcriptError)) {
-      pipelineActive = 2;
-    } else if (speakerGroupsLoading) {
-      pipelineActive = 3;
-    } else if (visibleCastGroups.length === 0 && transcriptFetchDone && !transcriptError) {
-      pipelineActive = 3;
-    } else {
-      pipelineActive = 4;
+  const pipelineActiveIndex = useMemo(() => {
+    if (phase === "uploading") return 0;
+    if (phase === "processing") return inferPipelineStep(phase, job);
+    if (phase === "done" && mediaDone) {
+      if (transcriptLoading || (!transcriptFetchDone && !transcriptError)) {
+        return 4;
+      }
+      if (speakerGroupsLoading) return 4;
+      return 5;
     }
-  }
+    return 0;
+  }, [
+    phase,
+    job,
+    mediaDone,
+    transcriptLoading,
+    transcriptFetchDone,
+    transcriptError,
+    speakerGroupsLoading,
+  ]);
 
   return (
     <div className="space-y-10">
@@ -537,36 +697,59 @@ export default function UploadMatchPage() {
             Import from Video
           </h1>
           <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-muted-foreground">
-            Upload a clip, review detected speakers, create characters, then attach
-            voices in Voice Studio. Replace Lines comes after your cast has voices.
+            Pulls a transcript and cast candidates from your clip. Confirmed roster
+            lives in Characters; voices in Voice Studio; line swaps in Replace Lines
+            after at least one voice exists.
           </p>
         </div>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 rounded-2xl border border-border bg-surface p-3 shadow-soft sm:grid-cols-3 lg:grid-cols-5">
-        {[
-          { icon: FileVideo, label: "Upload video", idx: 0 },
-          { icon: Mic2, label: "Extract audio", idx: 1 },
-          { icon: FileText, label: "Transcript", idx: 2 },
-          { icon: Users, label: "Detected cast", idx: 3 },
-          { icon: UserPlus, label: "Cast & voices", idx: 4 },
-        ].map((step) => {
-          const active = pipelineActive === step.idx;
+      {importBootKind === "restored" && phase === "done" && mediaDone ? (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
+          Loaded your saved import for this project from this browser. Upload again
+          anytime to start a new run.
+        </div>
+      ) : null}
+      {importBootKind === "fresh" && (phase === "uploading" || phase === "processing") ? (
+        <div className="rounded-xl border border-border bg-surface-sunken/60 px-4 py-3 text-sm text-muted-foreground">
+          New import run. We will show fresh results here when this job finishes.
+        </div>
+      ) : null}
+
+      <div className="mb-6 grid grid-cols-2 gap-3 rounded-2xl border border-border bg-surface p-3 shadow-soft sm:grid-cols-3 lg:grid-cols-6">
+        {PIPELINE_ICONS.map((Icon, idx) => {
+          const label = PIPELINE_STEPS[idx]!;
+          const active = pipelineActiveIndex === idx;
+          const past = pipelineActiveIndex > idx;
           return (
             <div
-              key={step.label}
-              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 ${active ? "bg-primary/10" : "bg-transparent"}`}
+              key={label}
+              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 transition ${
+                active
+                  ? "bg-primary/10 ring-1 ring-primary/20"
+                  : past
+                    ? "bg-white/[0.02]"
+                    : "opacity-55"
+              }`}
             >
               <span
-                className={`flex h-8 w-8 items-center justify-center rounded-lg ${
-                  active ? "bg-primary text-primary-foreground" : "bg-surface-sunken text-muted-foreground"
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                  active
+                    ? "bg-primary text-primary-foreground"
+                    : past
+                      ? "bg-surface-sunken text-foreground"
+                      : "bg-surface-sunken text-muted-foreground"
                 }`}
               >
-                <step.icon className="h-3.5 w-3.5" strokeWidth={2.25} />
+                <Icon
+                  className={`h-3.5 w-3.5 ${active ? "motion-safe:animate-pulse" : ""}`}
+                  strokeWidth={2.25}
+                />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="font-mono text-[10px] text-muted-foreground">0{step.idx + 1}</div>
-                <div className="text-xs font-semibold text-foreground">{step.label}</div>
+                <div className="text-xs font-semibold leading-tight text-foreground">
+                  {label}
+                </div>
               </div>
             </div>
           );
@@ -638,6 +821,7 @@ export default function UploadMatchPage() {
                   onChange={(e) => {
                     const fnext = e.target.files?.[0] ?? null;
                     setFile(fnext);
+                    setImportBootKind("none");
                     setPhase("idle");
                     setJob(null);
                     setPersistedMedia(null);
@@ -691,13 +875,65 @@ export default function UploadMatchPage() {
               </div>
 
               {(phase === "uploading" || phase === "processing") && (
-                <div className="mt-6 w-full space-y-2 text-left">
-                  <p className="text-xs text-muted-foreground">
-                    {phase === "uploading"
-                      ? "Upload progress"
-                      : "Transcribing audio and grouping speakers"}
-                  </p>
-                  <ProgressBar value={displayProgress} />
+                <div className="mt-6 w-full space-y-4 text-left">
+                  <div className="flex items-start gap-3">
+                    <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                      <Spinner className="h-5 w-5 border-t-primary" />
+                      <span className="pointer-events-none absolute inset-0 motion-safe:animate-ping rounded-xl bg-primary/15 [animation-duration:2s]" />
+                    </div>
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <p className="text-sm font-medium text-foreground">
+                        {phase === "uploading"
+                          ? "Uploading your video…"
+                          : job?.message || "Working on your import…"}
+                      </p>
+                      {phase === "processing" && processingTrust.longWait ? (
+                        <p className="text-[11px] leading-relaxed text-muted-foreground">
+                          Still processing. This can take a little while depending on
+                          video length and speech quality. Keep this tab open while we
+                          finish processing.
+                        </p>
+                      ) : (
+                        <p className="text-[11px] leading-relaxed text-muted-foreground">
+                          This can take a little while depending on video length and
+                          speech quality. Keep this tab open while we finish processing.
+                        </p>
+                      )}
+                      {phase === "processing" && processingTrust.severeStall ? (
+                        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                          No progress updates from the server for several minutes. The
+                          job may still be working; check API logs or try again if it
+                          never finishes.
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                  {phase === "uploading" ? (
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-300"
+                        style={{
+                          width: `${Math.round(Math.min(1, Math.max(0, uploadRatio)) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
+                      {processingTrust.determinate &&
+                      typeof job?.progress === "number" ? (
+                        <div
+                          className="h-full rounded-full bg-primary/90 transition-[width] duration-500"
+                          style={{
+                            width: `${Math.round(Math.min(1, Math.max(0, job.progress)) * 100)}%`,
+                          }}
+                        />
+                      ) : (
+                        <div className="relative h-full w-full">
+                          <div className="motion-safe:animate-pulse absolute inset-y-0 left-0 w-2/5 rounded-full bg-gradient-to-r from-primary/25 via-primary/80 to-primary/25 [animation-duration:1.3s]" />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -740,14 +976,19 @@ export default function UploadMatchPage() {
 
           {job ? (
             <div className="mt-4 space-y-3 text-sm">
-              {job.message ? (
+              {normalizeJobStatus(job.status) === "running" ||
+              normalizeJobStatus(job.status) === "queued" ? (
+                <div className="flex items-start gap-2">
+                  <Spinner className="mt-0.5 h-4 w-4 shrink-0 border-t-muted-foreground" />
+                  <p className="text-muted">
+                    {job.message || "Working on your import…"}
+                  </p>
+                </div>
+              ) : job.message ? (
                 <p className="text-muted">{job.message}</p>
               ) : (
-                <p className="text-muted">Working on your video.</p>
+                <p className="text-muted">Working on your import.</p>
               )}
-              {phase !== "uploading" ? (
-                <ProgressBar value={job.progress} />
-              ) : null}
             </div>
           ) : mediaDone ? (
             <p className="mt-4 text-sm text-muted">
@@ -784,26 +1025,27 @@ export default function UploadMatchPage() {
                   Transcript segments: {mediaDone.transcript_segment_count}
                 </p>
               ) : null}
-              {mediaDone.import_provider === "azure_video_indexer" ? (
+              {mediaDone.import_provider === "local" ? (
                 <p className="mt-1 text-xs text-muted">
-                  Cast signal: Azure AI Video Indexer. Speaker tags reflect detected groups and likely recurring speakers, not guaranteed real-world identity.
-                </p>
-              ) : mediaDone.import_provider === "local" ? (
-                <p className="mt-1 text-xs text-muted">
-                  Cast signal: processed locally on this machine (fallback path).
+                  Transcript and speakers from on-device analysis.
                   {mediaDone.fallback_reason != null &&
                   mediaDone.fallback_reason !== "" ? (
-                    <>
-                      {" "}
-                      Reason: {mediaDone.fallback_reason}
-                    </>
+                    <> {mediaDone.fallback_reason}</>
                   ) : null}
+                </p>
+              ) : mediaDone.import_provider ? (
+                <p className="mt-1 text-xs text-muted">
+                  Cast candidates from AI video analysis. Tags are grouped speakers,
+                  not guaranteed real-world identities.
                 </p>
               ) : null}
               <p className="mt-2 text-xs text-muted">
                 This import is saved for the active project on your computer.
               </p>
-              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <div className="mt-2">
+                <p className="text-[11px] font-medium text-muted">Frames from this import</p>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {mediaDone.thumbnail_paths.map((rel, i) => (
                   <div
                     key={rel}
@@ -812,9 +1054,51 @@ export default function UploadMatchPage() {
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={mediaUrl(rel)}
-                      alt={`Thumbnail ${i + 1}`}
+                      alt={`Frame ${i + 1}`}
                       className="h-24 w-full object-cover sm:h-28"
                     />
+                    <div className="flex flex-col gap-1 border-t border-white/[0.06] bg-black/20 px-2 py-1.5">
+                      <a
+                        href={mediaUrl(rel)}
+                        download={`castweave-frame-${i + 1}.jpg`}
+                        className="text-[10px] font-medium text-accent hover:underline"
+                      >
+                        Download
+                      </a>
+                      {transcriptEpisodeId && projectRoster.length > 0 ? (
+                        <label className="text-[10px] text-muted">
+                          <span className="sr-only">Use as character photo</span>
+                          <select
+                            className="mt-0.5 w-full rounded border border-white/[0.1] bg-canvas/80 px-1 py-0.5 text-[10px] text-text"
+                            defaultValue=""
+                            onChange={(e) => {
+                              const cid = e.target.value;
+                              if (!cid || !transcriptEpisodeId) return;
+                              void (async () => {
+                                try {
+                                  await api.setCharacterAvatarFromEpisodeThumb(
+                                    cid,
+                                    {
+                                      episode_id: transcriptEpisodeId,
+                                      thumb_index: i,
+                                    },
+                                  );
+                                } finally {
+                                  e.target.value = "";
+                                }
+                              })();
+                            }}
+                          >
+                            <option value="">Use as character photo…</option>
+                            {projectRoster.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -829,13 +1113,55 @@ export default function UploadMatchPage() {
                       Timestamp, speaker tag, and line text.
                     </p>
                   </div>
-                  {showTranscriptSpinner ? (
-                    <Badge tone="accent">Loading…</Badge>
-                  ) : (
-                    <Badge tone="default">
-                      {transcriptSegments.length} segments
-                    </Badge>
-                  )}
+                  <div className="flex flex-col items-end gap-2">
+                    {showTranscriptSpinner ? (
+                      <Badge tone="accent">Loading…</Badge>
+                    ) : (
+                      <Badge tone="default">
+                        {transcriptSegments.length} segments
+                      </Badge>
+                    )}
+                    {transcriptEpisodeId &&
+                    transcriptFetchDone &&
+                    !transcriptError &&
+                    transcriptSegments.length > 0 ? (
+                      <div className="flex flex-wrap justify-end gap-2 text-[10px] font-medium">
+                        <a
+                          href={api.episodeTranscriptExportUrl(
+                            transcriptEpisodeId,
+                            "txt",
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-accent underline-offset-2 hover:underline"
+                        >
+                          Transcript .txt
+                        </a>
+                        <a
+                          href={api.episodeTranscriptExportUrl(
+                            transcriptEpisodeId,
+                            "srt",
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-accent underline-offset-2 hover:underline"
+                        >
+                          Subtitles .srt
+                        </a>
+                        <a
+                          href={api.episodeTranscriptExportUrl(
+                            transcriptEpisodeId,
+                            "vtt",
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-accent underline-offset-2 hover:underline"
+                        >
+                          Subtitles .vtt
+                        </a>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
                 {transcriptError ? (
                   <div className="mt-3">
@@ -944,8 +1270,14 @@ export default function UploadMatchPage() {
                       Detected cast
                     </h3>
                     <p className="mt-1 text-xs leading-relaxed text-muted">
-                      Rename if needed, then create a character or skip. Voice
-                      Studio is next after you create someone.
+                      <span className="font-medium text-text/85">Rename</span> only
+                      fixes the label for this import.
+                      <span className="font-medium text-text/85">
+                        {" "}
+                        Create character
+                      </span>{" "}
+                      adds a real roster entry in this project. Then attach a voice
+                      in Voice Studio.
                     </p>
                   </div>
                 </div>
@@ -1319,7 +1651,7 @@ export default function UploadMatchPage() {
       </div>
 
       <footer className="mt-16 border-t border-border pt-6 text-center text-[11px] text-muted-foreground">
-        CastVoice · A studio for crafting voices.
+        CastWeave · Video to cast, voice, and lines.
       </footer>
     </div>
   );

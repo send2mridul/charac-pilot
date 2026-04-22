@@ -17,6 +17,7 @@ import httpx
 from services import azure_vi_config as cfg
 from services.azure_vi_diag import azure_vi_line
 from services.azure_vi_errors import brief_exception_for_fallback
+from services.job_timing import job_timing_add_phase
 from services.video_indexer_mapping import map_video_indexer_results_to_castweave_entities
 from services.video_indexer_token import (
     TOKEN_MODULE_DIAG_VERSION,
@@ -139,6 +140,7 @@ def poll_video_indexer_status(
     *,
     job_id: str | None = None,
     access_token: str | None = None,
+    poll_interval_sec_override: float | None = None,
 ) -> dict:
     """
     GET Videos/{videoId}/Index until state is terminal or timeout.
@@ -208,8 +210,8 @@ def poll_video_indexer_status(
                     job_id,
                     progress=frac,
                     message=(
-                        f"Azure VI: indexing {state or '…'} "
-                        f"({elapsed:.0f}s / {deadline:.0f}s)"
+                        f"AI video analysis in progress ({state or 'working'}). "
+                        "Longer clips may need a few minutes."
                     )[:500],
                 )
             except Exception:
@@ -315,11 +317,13 @@ def index_local_file_for_episode(
         media_path.name,
     )
 
+    t_pipeline = time.perf_counter()
+
     if job_id:
         store.update_job(
             job_id,
             progress=PROG_TOKEN,
-            message="Azure VI: requesting access token…",
+            message="Connecting to AI video analysis…",
         )
 
     token = _get_vi_token_with_timeout()
@@ -328,7 +332,7 @@ def index_local_file_for_episode(
         store.update_job(
             job_id,
             progress=PROG_UPLOADING,
-            message="Azure VI: uploading video…",
+            message="Uploading for cloud analysis…",
         )
 
     vid = upload_video_to_video_indexer(
@@ -341,11 +345,22 @@ def index_local_file_for_episode(
         store.update_job(
             job_id,
             progress=PROG_UPLOAD_OK,
-            message=f"Azure VI: upload accepted ({vid[:20]}…)",
+            message="Video received; analyzing speech and speakers…",
         )
 
     azure_vi_line("pipeline: polling until Processed/Failed…")
-    payload = poll_video_indexer_status(vid, job_id=job_id, access_token=token)
+    try:
+        size_b = media_path.stat().st_size
+    except OSError:
+        size_b = 0
+    # Smaller uploads tend to index quickly; poll a bit faster to reduce idle waits.
+    fast_poll = min(cfg.poll_interval_sec(), 3.5) if size_b < 15 * 1024 * 1024 else None
+    payload = poll_video_indexer_status(
+        vid,
+        job_id=job_id,
+        access_token=token,
+        poll_interval_sec_override=fast_poll,
+    )
 
     if (payload.get("state") or "").strip() != "Processed":
         st = (payload.get("state") or "").strip()
@@ -359,29 +374,36 @@ def index_local_file_for_episode(
         store.update_job(
             job_id,
             progress=PROG_INSIGHTS,
-            message="Azure VI: fetching insights…",
+            message="Reading transcript and speaker cues…",
         )
 
     insights_payload = fetch_video_indexer_insights(vid, access_token=token)
+
+    t_pre_map = time.perf_counter()
+    if job_id:
+        job_timing_add_phase(job_id, "analysis", t_pre_map - t_pipeline)
 
     azure_vi_line("map step: mapping transcript / speaker groups to CastWeave segments")
     if job_id:
         store.update_job(
             job_id,
             progress=PROG_MAPPING,
-            message="Azure VI: mapping transcript and groups…",
+            message="Building transcript and cast candidates…",
         )
 
+    t_map = time.perf_counter()
     language, segments = map_video_indexer_results_to_castweave_entities(
         insights_payload,
         episode_id,
     )
+    if job_id:
+        job_timing_add_phase(job_id, "mapping", time.perf_counter() - t_map)
 
     if job_id:
         store.update_job(
             job_id,
             progress=PROG_MAPPED,
-            message=f"Azure VI: mapped {len(segments)} segments",
+            message=f"Prepared {len(segments)} transcript lines",
         )
 
     azure_vi_line(

@@ -251,6 +251,51 @@ export const api = {
   listEpisodeTranscriptSegments: (episodeId: string) =>
     requestJson<TranscriptSegmentDto[]>(`/episodes/${episodeId}/segments`),
 
+  episodeTranscriptExportUrl: (
+    episodeId: string,
+    format: "txt" | "srt" | "vtt",
+  ): string =>
+    `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/transcript/export.${format}`,
+
+  deleteEpisode: async (episodeId: string) => {
+    const res = await fetch(
+      `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}`,
+      { method: "DELETE", cache: "no-store" },
+    );
+    if (res.ok) return;
+    const text = await res.text();
+    throw new ApiError(`API ${res.status} for DELETE episode`, res.status, text);
+  },
+
+  deleteCharacter: async (characterId: string) => {
+    const res = await fetch(
+      `${getPublicApiBaseUrl()}/characters/${encodeURIComponent(characterId)}`,
+      { method: "DELETE", cache: "no-store" },
+    );
+    if (res.ok) return;
+    const text = await res.text();
+    throw new ApiError(`API ${res.status} for DELETE character`, res.status, text);
+  },
+
+  clearCharacterVoice: (characterId: string) =>
+    requestJson<CharacterDto>(
+      `/characters/${encodeURIComponent(characterId)}/clear-voice`,
+      { method: "POST", headers: { Accept: "application/json" } },
+    ),
+
+  setCharacterAvatarFromEpisodeThumb: (
+    characterId: string,
+    body: { episode_id: string; thumb_index: number },
+  ) =>
+    requestJson<CharacterDto>(
+      `/characters/${encodeURIComponent(characterId)}/avatar-from-episode-thumb`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
   listSpeakerGroups: (episodeId: string) =>
     requestJson<SpeakerGroupDto[]>(`/episodes/${episodeId}/speaker-groups`),
 

@@ -698,6 +698,53 @@ class SqliteStore:
             self._cx.commit()
         return c
 
+    def delete_character(self, character_id: str) -> bool:
+        """Remove character row and associated voice clips (audio files on disk)."""
+        with self._lock:
+            cur = self._cx.execute("SELECT * FROM characters WHERE id = ?", (character_id,))
+            r = cur.fetchone()
+            if not r:
+                return False
+            clip_cur = self._cx.execute(
+                "SELECT audio_path FROM voice_clips WHERE character_id = ?",
+                (character_id,),
+            )
+            clip_paths = [str(row[0] or "") for row in clip_cur.fetchall()]
+        for rel in clip_paths:
+            if not rel:
+                continue
+            p = STORAGE_ROOT / rel
+            if p.is_file():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+        with self._lock:
+            self._cx.execute("DELETE FROM voice_clips WHERE character_id = ?", (character_id,))
+            del_cur = self._cx.execute("DELETE FROM characters WHERE id = ?", (character_id,))
+            n = del_cur.rowcount or 0
+            self._cx.commit()
+        return n > 0
+
+    def delete_episode(self, episode_id: str) -> bool:
+        """Remove episode metadata, transcript, groups, jobs; unlink characters from this import."""
+        with self._lock:
+            cur = self._cx.execute("SELECT id FROM episodes WHERE id = ?", (episode_id,))
+            if not cur.fetchone():
+                return False
+            self._cx.execute("DELETE FROM transcript_segments WHERE episode_id = ?", (episode_id,))
+            self._cx.execute("DELETE FROM speaker_groups WHERE episode_id = ?", (episode_id,))
+            self._cx.execute("DELETE FROM replacements WHERE episode_id = ?", (episode_id,))
+            self._cx.execute("DELETE FROM jobs WHERE episode_id = ?", (episode_id,))
+            self._cx.execute(
+                "UPDATE characters SET source_episode_id = NULL WHERE source_episode_id = ?",
+                (episode_id,),
+            )
+            del_cur = self._cx.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
+            n = del_cur.rowcount or 0
+            self._cx.commit()
+        return n > 0
+
     def find_character_by_speaker(self, episode_id: str, speaker_label: str) -> CharacterRecord | None:
         with self._lock:
             cur = self._cx.execute(

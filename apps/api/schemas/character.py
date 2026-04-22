@@ -119,6 +119,13 @@ class PreviewOut(BaseModel):
     provider: str
     clip_id: str | None = None
 
+    @field_serializer("provider")
+    def _serialize_preview_provider(self, v: str) -> str:
+        val = (v or "").strip().lower()
+        if not val or val in {"stub", "local", "local_builtin", "fallback"}:
+            return "fallback"
+        return "primary"
+
 
 class AssignVoiceBody(BaseModel):
     voice_id: str
@@ -153,6 +160,13 @@ class GenerateClipsOut(BaseModel):
     generated_count: int
     clips: list[BatchGeneratedClipOut]
 
+    @field_serializer("provider")
+    def _serialize_clip_provider(self, v: str) -> str:
+        val = (v or "").strip().lower()
+        if not val or val in {"stub", "local", "local_builtin", "fallback"}:
+            return "fallback"
+        return "primary"
+
 
 class GenerateLinesOut(BaseModel):
     character_id: str
@@ -174,6 +188,13 @@ class GenerateDraftLinesOut(BaseModel):
     lines: list[DraftLineOut]
     provider_used: str = "fallback"
     fallback_used: bool = False
+
+    @field_serializer("provider_used")
+    def _serialize_draft_provider(self, v: str) -> str:
+        val = (v or "").strip().lower()
+        if not val or val in {"stub", "local", "local_builtin", "fallback"}:
+            return "fallback"
+        return "primary"
 
 
 class ClipLineIn(BaseModel):

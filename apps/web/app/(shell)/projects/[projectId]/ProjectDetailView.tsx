@@ -66,25 +66,25 @@ export function ProjectDetailView({
     () => [
       {
         id: "footage",
-        label: "Import video or add characters manually",
+        label: "Import from Video (transcript + cast candidates)",
         done: hasFootageOrRoster,
         href: "/upload-match",
       },
       {
         id: "cast",
-        label: "Review detected cast and create characters",
+        label: "Characters — confirm your project roster",
         done: castConfirmed,
-        href: "/upload-match",
+        href: "/characters",
       },
       {
         id: "voice",
-        label: "Attach or design voices in Voice Studio",
+        label: "Voice Studio — attach or design voices",
         done: charCount > 0 && allVoiced,
         href: "/voice-studio",
       },
       {
         id: "replace",
-        label: "Replace lines with new performances",
+        label: "Replace Lines (after voices exist)",
         done: hasReplacementReady,
         href: "/replace-lines",
       },
@@ -103,29 +103,31 @@ export function ProjectDetailView({
     }
     if (nextItem.id === "footage") {
       return {
-        title: "Choose how you start",
+        title: "Bring in a clip or start your roster",
         body:
-          "Import a clip to detect speakers and lines, or add characters by hand on the Characters page.",
+          "Open Import from Video for transcript + cast candidates, or go to Characters to add people manually first.",
       };
     }
     if (nextItem.id === "cast") {
       return {
-        title: "Confirm your detected cast",
+        title: "Lock in your cast on the roster",
         body:
-          "Name each detected voice, merge duplicates if needed, and create characters for your roster.",
+          "Use Characters to add or edit project characters. If you imported video, finish turning detected speakers into roster entries on the import page.",
       };
     }
     if (nextItem.id === "voice") {
       return {
-        title: "Give your cast voices",
-        body: `${Math.max(0, charCount - voiced)} character(s) still need a voice. Open Voice Studio to assign or design.`,
+        title: "Assign voices to roster characters",
+        body: `${Math.max(0, charCount - voiced)} character(s) still need a voice. Voice Studio is the next stop.`,
       };
     }
     return {
-      title: "Final pass: replace lines",
-      body: "Pick a line, pick a character with a voice, and generate new audio.",
+      title: "Replace Lines",
+      body: hasReplacementReady
+        ? "Swap performances line by line when you are ready."
+        : "Open Replace Lines once at least one character has a voice and you have transcript segments.",
     };
-  }, [nextItem, charCount, voiced]);
+  }, [nextItem, charCount, voiced, hasReplacementReady]);
 
   async function saveProject() {
     setSaving(true);
@@ -142,6 +144,23 @@ export function ProjectDetailView({
       setErr(e instanceof ApiError ? e.message : "Could not save");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function removeEpisodeImport(ep: EpisodeDto) {
+    if (
+      !globalThis.confirm(
+        `Remove this import (“${ep.title}”) from the project? Its transcript and detected cast data will be deleted from this machine.`,
+      )
+    ) {
+      return;
+    }
+    setErr(null);
+    try {
+      await api.deleteEpisode(ep.id);
+      router.refresh();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Could not remove import");
     }
   }
 
@@ -309,8 +328,8 @@ export function ProjectDetailView({
       <Panel>
         <h2 className="text-sm font-semibold text-text">Production checklist</h2>
         <p className="mt-1 text-sm text-muted">
-          Import, build cast, attach voices, then replace lines. Completed steps
-          stay marked below.
+          Import from Video finds transcript + candidates. Characters is the
+          confirmed roster. Voice Studio assigns voices. Replace Lines comes last.
         </p>
         <ul className="mt-4 space-y-2">
           {checklist.map((item) => (
@@ -417,7 +436,11 @@ export function ProjectDetailView({
           </Link>
           <Link
             href="/replace-lines"
-            className={buttonClass("secondary", "px-4")}
+            className={
+              hasReplacementReady
+                ? buttonClass("secondary", "px-4")
+                : buttonClass("ghost", "px-4 text-muted-foreground")
+            }
             onClick={() => setActiveProjectId(project.id)}
           >
             Replace Lines
@@ -456,7 +479,7 @@ export function ProjectDetailView({
                     {formatUpdated(ep.updated_at)}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Badge tone="accent">{ep.status}</Badge>
                   <Link
                     href="/replace-lines"
@@ -465,6 +488,14 @@ export function ProjectDetailView({
                   >
                     Replace Lines
                   </Link>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="!px-2.5 !py-1 !text-xs text-red-600 dark:text-red-400"
+                    onClick={() => void removeEpisodeImport(ep)}
+                  >
+                    Remove import
+                  </Button>
                 </div>
               </li>
             ))}

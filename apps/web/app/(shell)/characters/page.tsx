@@ -14,6 +14,7 @@ import {
   Quote,
   Repeat,
   Sparkles,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -174,6 +175,49 @@ export default function CharactersPage() {
     setEditErr(null);
   }
 
+  async function removeCharacter(c: CharacterDto) {
+    if (
+      !globalThis.confirm(
+        `Remove “${c.name}” from this project? Saved clips for this character will be deleted.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.deleteCharacter(c.id);
+      setCharacters((prev) => prev.filter((x) => x.id !== c.id));
+      if (editId === c.id) setEditId(null);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err
+          : new ApiError("Could not delete character", 0, ""),
+      );
+    }
+  }
+
+  async function detachVoice(c: CharacterDto) {
+    if (
+      !globalThis.confirm(
+        `Remove the attached voice from “${c.name}”? You can pick another in Voice Studio.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const updated = await api.clearCharacterVoice(c.id);
+      setCharacters((prev) =>
+        prev.map((x) => (x.id === updated.id ? updated : x)),
+      );
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err
+          : new ApiError("Could not clear voice", 0, ""),
+      );
+    }
+  }
+
   async function saveEdit() {
     if (!editId || !editName.trim()) return;
     setEditSaving(true);
@@ -313,12 +357,6 @@ export default function CharactersPage() {
                 <ChevronDown className="h-3.5 w-3.5" />
               </span>
             </div>
-            {active ? (
-              <span className="text-xs text-muted-foreground">
-                <span className="font-mono font-semibold text-foreground">{active.scene_count}</span>{" "}
-                scenes
-              </span>
-            ) : null}
           </div>
           <div className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:inline-flex">
             <Sparkles className="h-3 w-3 text-primary" />
@@ -563,14 +601,24 @@ export default function CharactersPage() {
                         </span>
                       </div>
 
-                      <button
-                        type="button"
-                        className="mt-14 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-foreground transition-colors hover:border-foreground hover:bg-foreground hover:text-background"
-                        onClick={() => openEdit(c)}
-                      >
-                        <Pencil className="h-3 w-3" />
-                        Edit
-                      </button>
+                      <div className="mt-14 flex flex-col items-end gap-1.5">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-foreground transition-colors hover:border-foreground hover:bg-foreground hover:text-background"
+                          onClick={() => openEdit(c)}
+                        >
+                          <Pencil className="h-3 w-3" />
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 hover:underline dark:text-red-400"
+                          onClick={() => void removeCharacter(c)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Remove
+                        </button>
+                      </div>
                     </div>
 
                     <div className="mt-4">
@@ -646,6 +694,14 @@ export default function CharactersPage() {
                               <Repeat className="h-3 w-3" />
                               Change voice
                             </Link>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              className="flex min-w-[120px] flex-1 items-center justify-center gap-1.5 !px-3 !py-2 !text-xs"
+                              onClick={() => void detachVoice(c)}
+                            >
+                              Remove voice
+                            </Button>
                             <Link
                               href="/voice-studio"
                               className={buttonClass(
@@ -698,7 +754,7 @@ export default function CharactersPage() {
                             Attach a voice
                           </Link>
                           <Link
-                            href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=voice`}
+                            href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=voice&focus=attach`}
                             className="block text-center text-[11px] font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                           >
                             Open in Voice Studio
@@ -728,6 +784,9 @@ export default function CharactersPage() {
 
                     {c.sample_texts.length > 0 ? (
                       <div className="mt-3 space-y-2 border-t border-border pt-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Lines from your import (not voice preview text)
+                        </p>
                         {c.sample_texts.slice(0, 4).map((line, i) => (
                           <div key={i} className="flex gap-2 rounded-xl bg-surface-sunken/60 px-3 py-2">
                             <Quote className="h-3 w-3 shrink-0 text-primary" />
@@ -745,7 +804,7 @@ export default function CharactersPage() {
       )}
 
       <footer className="mt-16 border-t border-border pt-6 text-center text-[11px] text-muted-foreground">
-        CastVoice · A studio for crafting voices.
+        CastWeave · Video to cast, voice, and lines.
       </footer>
     </div>
   );

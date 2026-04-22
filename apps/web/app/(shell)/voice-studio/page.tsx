@@ -1235,7 +1235,9 @@ function VoiceStudioContent() {
                       <div className="flex items-center justify-between">
                         <p className="text-sm font-semibold text-text">Latest preview</p>
                         <Badge tone={preview.provider === "primary" ? "success" : "default"}>
-                          {preview.provider === "fallback" ? "fallback" : preview.provider}
+                          {preview.provider === "fallback"
+                            ? "On-device voice engine"
+                            : "Standard voice engine"}
                         </Badge>
                       </div>
                       <p className="mt-2 text-xs italic text-muted">&ldquo;{preview.text}&rdquo;</p>

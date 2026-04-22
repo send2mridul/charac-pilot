@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 
 from db.store import CharacterRecord, store
@@ -9,13 +10,53 @@ from schemas.character import CharacterOut
 log = logging.getLogger("characpilot.character_service")
 
 
+def _enrich_samples_from_transcript(c: CharacterRecord) -> CharacterRecord:
+    """
+    Fill sample_texts from import transcript segments when the DB snapshot is
+    empty or stale. Never uses Voice Studio preview text.
+    """
+    if not c.source_episode_id or not c.source_speaker_labels:
+        return c
+    try:
+        segs = store.list_transcript_segments(c.source_episode_id)
+    except Exception:
+        return c
+    label_set = set(c.source_speaker_labels)
+    matching = [
+        s for s in segs if s.speaker_label and s.speaker_label in label_set
+    ]
+    if not matching:
+        return c
+    texts_ordered: list[str] = []
+    seen: set[str] = set()
+    for s in sorted(matching, key=lambda x: (x.start_time, x.segment_id)):
+        t = (s.text or "").strip()
+        if t and t not in seen:
+            seen.add(t)
+            texts_ordered.append(t)
+    if not texts_ordered:
+        return c
+    total_dur = sum(max(0.0, s.end_time - s.start_time) for s in matching)
+    return replace(
+        c,
+        sample_texts=texts_ordered[:4],
+        segment_count=len(matching),
+        total_speaking_duration=round(total_dur, 2),
+    )
+
+
 def list_characters(project_id: str) -> list[CharacterOut]:
-    return [_to_out(c) for c in store.list_characters(project_id)]
+    return [
+        _to_out(_enrich_samples_from_transcript(c))
+        for c in store.list_characters(project_id)
+    ]
 
 
 def get_character(character_id: str) -> CharacterOut | None:
     c = store.get_character(character_id)
-    return _to_out(c) if c else None
+    if not c:
+        return None
+    return _to_out(_enrich_samples_from_transcript(c))
 
 
 def create_manual_character(
@@ -52,11 +93,25 @@ def create_character_from_group(
 ) -> CharacterOut:
     existing = store.find_character_by_speaker(episode_id, speaker_label)
     if existing:
+        groups = store.list_speaker_groups(episode_id)
+        group = next((g for g in groups if g.speaker_label == speaker_label), None)
+        rec: CharacterRecord = existing
+        if group:
+            updated = store.update_character(
+                existing.id,
+                sample_texts=list(group.sample_texts),
+                segment_count=group.segment_count,
+                total_speaking_duration=group.total_speaking_duration,
+            )
+            if updated is not None:
+                rec = updated
         log.info(
             "character already exists for episode=%s speaker=%s -> %s",
-            episode_id, speaker_label, existing.id,
+            episode_id,
+            speaker_label,
+            rec.id,
         )
-        return _to_out(existing)
+        return _to_out(_enrich_samples_from_transcript(rec))
 
     groups = store.list_speaker_groups(episode_id)
     group = next((g for g in groups if g.speaker_label == speaker_label), None)
@@ -77,14 +132,33 @@ def create_character_from_group(
     )
     log.info(
         "created character id=%s name=%s from episode=%s speaker=%s",
-        rec.id, rec.name, episode_id, speaker_label,
+        rec.id,
+        rec.name,
+        episode_id,
+        speaker_label,
     )
-    return _to_out(rec)
+    return _to_out(_enrich_samples_from_transcript(rec))
 
 
 def update_character(character_id: str, **fields: Any) -> CharacterOut | None:
     rec = store.update_character(character_id, **fields)
-    return _to_out(rec) if rec else None
+    return _to_out(_enrich_samples_from_transcript(rec)) if rec else None
+
+
+def delete_character(character_id: str) -> bool:
+    return store.delete_character(character_id)
+
+
+def clear_character_voice(character_id: str) -> CharacterOut | None:
+    return update_character(
+        character_id,
+        default_voice_id=None,
+        voice_provider=None,
+        voice_display_name=None,
+        preview_audio_path=None,
+        voice_source_type=None,
+        voice_parent_id=None,
+    )
 
 
 def _to_out(c: CharacterRecord) -> CharacterOut:

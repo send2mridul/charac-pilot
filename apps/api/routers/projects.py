@@ -1,3 +1,5 @@
+import logging
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile
@@ -14,9 +16,14 @@ from schemas.voice_clip import VoiceClipOut
 from services import character_service, episode_service, job_service, project_service
 from services.voice_clip_service import list_for_project
 from services.episode_media_worker import schedule_episode_processing
+from services.job_timing import (
+    job_timing_ensure_start,
+    job_timing_set_upload_save_sec,
+)
 from storage_paths import UPLOADS_ROOT, ensure_storage_dirs
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
 
@@ -87,6 +94,19 @@ async def upload_episode(project_id: str, file: UploadFile = File(...)):
     episode_dir.mkdir(parents=True, exist_ok=True)
     dest = episode_dir / f"source{suffix}"
 
+    job_out = job_service.create_episode_media_job(
+        project_id,
+        episode_id,
+        file.filename,
+    )
+    job_timing_ensure_start(job_out.id)
+    logger.info(
+        "[characpilot] JOB TIMING job_id=%s phase=upload_received filename=%s",
+        job_out.id,
+        file.filename,
+    )
+
+    t_disk0 = time.perf_counter()
     try:
         with dest.open("wb") as buffer:
             while True:
@@ -96,11 +116,22 @@ async def upload_episode(project_id: str, file: UploadFile = File(...)):
                 buffer.write(chunk)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Could not save upload: {e}") from e
+    disk_write_sec = time.perf_counter() - t_disk0
+    job_timing_set_upload_save_sec(job_out.id, disk_write_sec)
+    logger.info(
+        "[characpilot] JOB TIMING job_id=%s phase=file_saved sec=%.3f",
+        job_out.id,
+        disk_write_sec,
+    )
 
-    job_out = job_service.create_episode_media_job(
-        project_id,
+    nbytes = dest.stat().st_size if dest.is_file() else 0
+    logger.info(
+        "castweave_upload_timing job_id=%s episode_id=%s project_id=%s disk_write_sec=%.3f size_bytes=%s",
+        job_out.id,
         episode_id,
-        file.filename,
+        project_id,
+        disk_write_sec,
+        nbytes,
     )
     schedule_episode_processing(job_out.id, episode_id, project_id, dest)
 

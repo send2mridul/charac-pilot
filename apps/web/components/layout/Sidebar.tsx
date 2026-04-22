@@ -33,7 +33,7 @@ export function Sidebar() {
             {APP_BRAND}
           </div>
           <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-[var(--sidebar-muted)]">
-            Video to cast to voice
+            Video → cast → voice → lines
           </div>
         </div>
       </Link>
