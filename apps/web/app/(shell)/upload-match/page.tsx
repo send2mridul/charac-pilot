@@ -9,7 +9,7 @@ import {
   type MouseEvent,
 } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
   ChevronDown,
@@ -32,7 +32,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { api } from "@/lib/api/client";
-import { mediaUrl } from "@/lib/api/media";
+import { mediaUrl, mediaUrlWithCacheBust } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
 import type {
   CharacterDto,
@@ -193,13 +193,14 @@ function matchCharacterIdForSegment(
   chars: CharacterDto[],
 ): string {
   const label = seg.speaker_label ?? "";
-  const hit = chars.find(
+  if (!label) return "";
+  const voiced = chars.find(
     (c) =>
-      Boolean(c.default_voice_id) &&
-      Boolean(label) &&
-      c.source_speaker_labels.includes(label),
+      Boolean(c.default_voice_id) && c.source_speaker_labels.includes(label),
   );
-  return hit?.id ?? "";
+  if (voiced) return voiced.id;
+  const anyLinked = chars.find((c) => c.source_speaker_labels.includes(label));
+  return anyLinked?.id ?? "";
 }
 
 type Phase = "idle" | "uploading" | "processing" | "done" | "failed";
@@ -257,6 +258,8 @@ type PersistedImportContext = {
 
 export default function UploadMatchPage() {
   const toast = useToast();
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const { activeProjectId, projects, setActiveProjectId, loading: boot } =
     useProjects();
@@ -301,11 +304,13 @@ export default function UploadMatchPage() {
   const [episodeReplacements, setEpisodeReplacements] = useState<
     ReplacementDto[]
   >([]);
+  /** True while episode replacements are being fetched; avoids list collapse on switch. */
+  const [importReplacementsLoading, setImportReplacementsLoading] =
+    useState(false);
   const [charPickBySegment, setCharPickBySegment] = useState<
     Record<string, string>
   >({});
   const [lineEditorDraft, setLineEditorDraft] = useState("");
-  const [lineEditorTone, setLineEditorTone] = useState("");
   /** Hindi imports only: Hindi script (default) vs Roman helper (persisted per episode). */
   const [hindiTranscriptViewMode, setHindiTranscriptViewMode] =
     useState<HindiTranscriptViewMode>("devanagari");
@@ -338,6 +343,10 @@ export default function UploadMatchPage() {
   >("none");
   const [coverageBannerDismissedFor, setCoverageBannerDismissedFor] = useState<string | null>(null);
   const [avatarBusyIndex, setAvatarBusyIndex] = useState<number | null>(null);
+  const transcriptEpisodeIdRef = useRef<string | null>(null);
+  /** While router.replace commits, the effect may see an old `?episode=`; avoid syncing back to the previous id. */
+  const importUrlExpectEpisodeIdRef = useRef<string | null>(null);
+  const importUrlStaleParamEpisodeIdRef = useRef<string | null>(null);
   const [processingTrust, setProcessingTrust] = useState({
     determinate: true,
     longWait: false,
@@ -462,6 +471,7 @@ export default function UploadMatchPage() {
       ? mediaResultFromJob(job)
       : null);
   const transcriptEpisodeId = resolveEpisodeIdForTranscript(job, mediaDone);
+  transcriptEpisodeIdRef.current = transcriptEpisodeId;
 
   const activeEpisodeRecord = useMemo(
     () =>
@@ -774,18 +784,29 @@ export default function UploadMatchPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeProjectId, phase, createdChars]);
+  }, [activeProjectId, phase]);
 
   useEffect(() => {
     const ep = transcriptEpisodeId;
     if (!ep || phase !== "done") {
       setEpisodeReplacements([]);
+      setImportReplacementsLoading(false);
       return;
     }
     let cancelled = false;
-    void api.listEpisodeReplacements(ep).then((rows) => {
-      if (!cancelled) setEpisodeReplacements(rows);
-    });
+    setImportReplacementsLoading(true);
+    setEpisodeReplacements([]);
+    void api
+      .listEpisodeReplacements(ep)
+      .then((rows) => {
+        if (!cancelled) setEpisodeReplacements(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setEpisodeReplacements([]);
+      })
+      .finally(() => {
+        if (!cancelled) setImportReplacementsLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -843,16 +864,32 @@ export default function UploadMatchPage() {
   const episodeUrlParam = searchParams.get("episode");
   useEffect(() => {
     if (!episodeUrlParam || !activeProjectId || phase !== "done") return;
+    if (
+      importUrlExpectEpisodeIdRef.current != null &&
+      importUrlStaleParamEpisodeIdRef.current != null &&
+      episodeUrlParam === importUrlStaleParamEpisodeIdRef.current &&
+      transcriptEpisodeIdRef.current === importUrlExpectEpisodeIdRef.current
+    ) {
+      return;
+    }
+    if (
+      importUrlExpectEpisodeIdRef.current != null &&
+      episodeUrlParam === importUrlExpectEpisodeIdRef.current
+    ) {
+      importUrlExpectEpisodeIdRef.current = null;
+      importUrlStaleParamEpisodeIdRef.current = null;
+    }
+    if (transcriptEpisodeIdRef.current === episodeUrlParam) {
+      return;
+    }
     const ep = projectEpisodes.find((e) => e.id === episodeUrlParam);
     if (!ep) return;
-    if (transcriptEpisodeId === ep.id) return;
     switchToEpisode(ep);
-  }, [episodeUrlParam, activeProjectId, phase, projectEpisodes, transcriptEpisodeId]);
+  }, [episodeUrlParam, activeProjectId, phase, projectEpisodes]);
 
   useEffect(() => {
     if (!selectedTranscriptSegmentId) {
       setLineEditorDraft("");
-      setLineEditorTone("");
       return;
     }
     const row = transcriptSegments.find(
@@ -863,30 +900,33 @@ export default function UploadMatchPage() {
       ? hindiPrimaryDisplayText(row, hindiTranscriptViewMode)
       : row.text;
     setLineEditorDraft(primary);
-    const cid = charPickBySegment[selectedTranscriptSegmentId] ?? "";
-    const rep = episodeReplacements.find(
-      (r) =>
-        r.segment_id === selectedTranscriptSegmentId &&
-        (!cid || r.character_id === cid),
-    );
-    setLineEditorTone((rep?.tone_style ?? "").trim());
   }, [
     selectedTranscriptSegmentId,
     transcriptSegments,
-    episodeReplacements,
-    charPickBySegment,
     isHindiTranscriptImport,
     hindiTranscriptViewMode,
   ]);
 
   function switchToEpisode(ep: EpisodeDto) {
-    if (sourceAudioRef.current) { sourceAudioRef.current.pause(); sourceAudioRef.current = null; }
+    if (transcriptEpisodeIdRef.current === ep.id) {
+      return;
+    }
+    if (sourceAudioRef.current) {
+      sourceAudioRef.current.pause();
+      sourceAudioRef.current = null;
+    }
     setPlayingSourceSegId(null);
     if (generatedAudioRef.current) {
       generatedAudioRef.current.pause();
       generatedAudioRef.current = null;
     }
     setPlayingGeneratedSegId(null);
+    setCharPickBySegment({});
+    setMergeTargetFor({});
+    setEditingLabel(null);
+    setCharCreateError(null);
+    setError(null);
+    setConfirmDeleteSegId(null);
     const media: EpisodeMediaJobResult = {
       episode_id: ep.id,
       project_id: ep.project_id,
@@ -898,16 +938,65 @@ export default function UploadMatchPage() {
       transcript_language: ep.transcript_language ?? undefined,
     };
     setPersistedMedia(media);
+    transcriptEpisodeIdRef.current = ep.id;
     setPhase("done");
     setJob(null);
     setTranscriptSegments([]);
     setTranscriptFetchDone(false);
     setTranscriptError(null);
+    setTranscriptLoading(true);
     setSpeakerGroups([]);
     setSpeakerGroupsError(null);
+    setSpeakerGroupsLoading(true);
     setCreatedChars({});
     setSelectedTranscriptSegmentId(null);
-    toast("Switched to imported video");
+    if (searchParams.get("episode") !== ep.id) {
+      const prev = searchParams.get("episode");
+      importUrlStaleParamEpisodeIdRef.current = prev;
+      importUrlExpectEpisodeIdRef.current = ep.id;
+      const next = new URLSearchParams(searchParams.toString());
+      next.set("episode", ep.id);
+      router.replace(`${pathname}?${next.toString()}`);
+    } else {
+      importUrlExpectEpisodeIdRef.current = null;
+      importUrlStaleParamEpisodeIdRef.current = null;
+    }
+    const finish = () => {
+      toast("Switched to imported video");
+    };
+    if (activeProjectId) {
+      void api
+        .listEpisodes(activeProjectId)
+        .then((rows) => {
+          const scored = rows
+            .filter((e) => e.segment_count > 0)
+            .sort(
+              (a, b) =>
+                new Date(b.updated_at).getTime() -
+                new Date(a.updated_at).getTime(),
+            );
+          setProjectEpisodes(scored);
+          const row = scored.find((e) => e.id === ep.id);
+          if (row) {
+            setPersistedMedia({
+              episode_id: row.id,
+              project_id: row.project_id,
+              source_video_path: row.source_video_path ?? "",
+              extracted_audio_path: row.extracted_audio_path ?? "",
+              thumbnail_paths: row.thumbnail_paths ?? [],
+              duration_sec: row.duration_sec ?? undefined,
+              transcript_segment_count: row.segment_count,
+              transcript_language: row.transcript_language ?? undefined,
+            });
+          }
+          finish();
+        })
+        .catch(() => {
+          finish();
+        });
+    } else {
+      finish();
+    }
   }
 
   function handleDeleteSegment(segId: string) {
@@ -986,7 +1075,8 @@ export default function UploadMatchPage() {
       sourceAudioRef.current = null;
       setPlayingSourceSegId(null);
     }
-    const url = mediaUrl(rep.audio_url.replace(/^\/media\//, ""));
+    const rel = rep.audio_url.replace(/^\/media\//, "");
+    const url = mediaUrlWithCacheBust(rel, rep.updated_at);
     const audio = new Audio(url);
     generatedAudioRef.current = audio;
     setPlayingGeneratedSegId(segmentId);
@@ -1042,7 +1132,7 @@ export default function UploadMatchPage() {
   async function generateLineFromTranscript(
     segmentId: string,
     text: string,
-    options?: { quiet?: boolean; tone_style?: string | null },
+    options?: { quiet?: boolean },
   ): Promise<boolean> {
     if (generatingSegmentId === segmentId || batchLineBusy) return false;
     const ep = transcriptEpisodeId;
@@ -1066,13 +1156,6 @@ export default function UploadMatchPage() {
     if (!options?.quiet) setError(null);
     try {
       const line = text.trim();
-      const toneRaw =
-        options?.tone_style !== undefined
-          ? options.tone_style
-          : segmentId === selectedTranscriptSegmentId
-            ? lineEditorTone.trim()
-            : "";
-      const tone_style = toneRaw ? toneRaw : undefined;
       const existing = episodeReplacements.find(
         (r) => r.segment_id === segmentId && r.character_id === cid,
       );
@@ -1080,14 +1163,12 @@ export default function UploadMatchPage() {
       if (existing) {
         rep = await api.patchEpisodeReplacement(ep, existing.replacement_id, {
           replacement_text: line,
-          tone_style: tone_style ?? existing.tone_style ?? undefined,
           regenerate_audio: true,
         });
       } else {
         rep = await api.createSegmentReplacement(ep, segmentId, {
           character_id: cid,
           replacement_text: line,
-          tone_style,
         });
       }
       setEpisodeReplacements((prev) => {
@@ -1095,6 +1176,12 @@ export default function UploadMatchPage() {
           (r) => !(r.segment_id === segmentId && r.character_id === cid),
         );
         return [rep, ...others];
+      });
+      setPlayingGeneratedSegId((id) => {
+        if (id !== segmentId) return id;
+        generatedAudioRef.current?.pause();
+        generatedAudioRef.current = null;
+        return null;
       });
       if (!options?.quiet) toast("Line audio saved to this project");
       return true;
@@ -1120,12 +1207,11 @@ export default function UploadMatchPage() {
         if (!cid) continue;
         const ch = projectRoster.find((c) => c.id === cid);
         if (!ch?.default_voice_id) continue;
-        const existing = episodeReplacements.find(
-          (r) => r.segment_id === row.segment_id && r.character_id === cid,
-        );
-        const ok = await generateLineFromTranscript(row.segment_id, row.text, {
+        const lineText = isHindiTranscriptImport
+          ? hindiPrimaryDisplayText(row, "devanagari")
+          : row.text;
+        const ok = await generateLineFromTranscript(row.segment_id, lineText, {
           quiet: true,
-          tone_style: existing?.tone_style ?? undefined,
         });
         if (ok) n += 1;
       }
@@ -1152,12 +1238,11 @@ export default function UploadMatchPage() {
         if (!cid) continue;
         const ch = projectRoster.find((c) => c.id === cid);
         if (!ch?.default_voice_id) continue;
-        const existing = episodeReplacements.find(
-          (r) => r.segment_id === row.segment_id && r.character_id === cid,
-        );
-        const ok = await generateLineFromTranscript(row.segment_id, row.text, {
+        const lineText = isHindiTranscriptImport
+          ? hindiPrimaryDisplayText(row, "devanagari")
+          : row.text;
+        const ok = await generateLineFromTranscript(row.segment_id, lineText, {
           quiet: true,
-          tone_style: existing?.tone_style ?? undefined,
         });
         if (ok) n += 1;
       }
@@ -1259,6 +1344,32 @@ export default function UploadMatchPage() {
         project_id: activeProjectId || undefined,
       });
       setCreatedChars((prev) => ({ ...prev, [label]: c }));
+      const pid = c.project_id || activeProjectId;
+      if (pid) {
+        try {
+          const rows = await api.listCharacters(pid);
+          setProjectRoster(rows);
+        } catch {
+          setProjectRoster((prev) => {
+            if (prev.some((x) => x.id === c.id)) return prev;
+            return [...prev, c];
+          });
+        }
+      } else {
+        setProjectRoster((prev) => {
+          if (prev.some((x) => x.id === c.id)) return prev;
+          return [...prev, c];
+        });
+      }
+      setCharPickBySegment((prev) => {
+        const next = { ...prev };
+        for (const row of transcriptSegments) {
+          if ((row.speaker_label || "") !== label) continue;
+          if (next[row.segment_id]) continue;
+          next[row.segment_id] = c.id;
+        }
+        return next;
+      });
       toast("Character created");
     } catch (e) {
       setCharCreateError(
@@ -1389,6 +1500,14 @@ export default function UploadMatchPage() {
   );
   const canGenerateSelectedLine = Boolean(
     selectedSeg && transcriptEpisodeId && selectedCharHasVoice,
+  );
+
+  const importBottomAssetsPending = Boolean(
+    workspaceReady &&
+      transcriptEpisodeId &&
+      (transcriptLoading ||
+        !transcriptFetchDone ||
+        importReplacementsLoading),
   );
 
   return (
@@ -1599,11 +1718,11 @@ export default function UploadMatchPage() {
                   {mediaDone?.transcript_language
                     ? ` · ${spokenLanguageUiLabel(mediaDone.transcript_language)}`
                     : ""}
-                  {transcriptFetchDone
-                    ? ` · ${transcriptSegments.length} transcript lines`
-                    : transcriptLoading
-                      ? " · Loading transcript…"
-                      : ""}
+                  {transcriptError
+                    ? " · Transcript could not load"
+                    : transcriptFetchDone
+                      ? ` · ${transcriptSegments.length} transcript lines`
+                      : " · Loading transcript…"}
                   {speakerGroups.length > 0
                     ? ` · ${visibleCastGroups.length} cast speaker${visibleCastGroups.length === 1 ? "" : "s"}`
                     : ""}
@@ -1995,7 +2114,7 @@ export default function UploadMatchPage() {
                 </div>
               ) : null}
               {showTranscriptSpinner && !transcriptError ? (
-                <div className="mt-4 flex items-center gap-2 text-sm text-foreground">
+                <div className="mt-4 flex min-h-[min(40vh,420px)] items-center justify-center gap-2 rounded-xl border-2 border-border/80 bg-surface-sunken/30 px-4 py-8 text-sm text-foreground">
                   <Spinner className="h-4 w-4 border-t-canvas" />
                   Loading transcript…
                 </div>
@@ -2016,7 +2135,7 @@ export default function UploadMatchPage() {
                     const label = group?.display_name ?? row.speaker_label ?? "Unknown";
                     const sel = selectedTranscriptSegmentId === row.segment_id;
                     const pick = charPickBySegment[row.segment_id] ?? "";
-                    const rowRep = episodeReplacements.find(
+                    const rowRep = episodeReplacementsForWorkspace.find(
                       (r) =>
                         r.segment_id === row.segment_id &&
                         (!pick || r.character_id === pick),
@@ -2209,15 +2328,6 @@ export default function UploadMatchPage() {
                       ))}
                     </select>
                   </label>
-                  <label className="block min-w-[10rem] flex-1 text-sm font-semibold text-foreground">
-                    Tone / style (optional)
-                    <input
-                      className="mt-1.5 w-full rounded-lg border-2 border-border bg-card px-3 py-2.5 text-base text-foreground outline-none focus:border-primary"
-                      value={lineEditorTone}
-                      onChange={(e) => setLineEditorTone(e.target.value)}
-                      placeholder="e.g. warm, dry, urgent"
-                    />
-                  </label>
                 </div>
 
                 <div className="mt-5 flex flex-wrap gap-3">
@@ -2345,160 +2455,233 @@ export default function UploadMatchPage() {
 
           {/* Bottom asset strip: full width below the 3-column row (no grid/sticky overlap) */}
           <div className="w-full min-w-0 space-y-6 border-t border-border pt-8">
-            {mediaDone && mediaDone.thumbnail_paths.length > 0 ? (
-              <Panel className="rounded-2xl border-2 border-border bg-card p-5 shadow-soft">
-                <div className="flex flex-wrap items-end justify-between gap-3">
-                  <div>
-                    <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
-                      <Film className="h-5 w-5 text-primary" />
-                      Frames from this import
-                    </h2>
-                    <p className="mt-1 text-sm text-foreground/80">
-                      Stills from the active episode. Scroll horizontally on small screens. Assign a
-                      frame as a character photo below.
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
-                  {mediaDone.thumbnail_paths.map((rel, i) => (
-                    <div
-                      key={rel}
-                      className="w-44 shrink-0 snap-start overflow-hidden rounded-xl ring-2 ring-border"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={mediaUrl(rel)}
-                        alt={`Frame ${i + 1}`}
-                        className="h-32 w-full object-cover"
-                      />
-                      <div className="flex flex-col gap-1.5 border-t border-border bg-card px-2 py-2">
-                        <a
-                          href={mediaUrl(rel)}
-                          download={`castweave-frame-${i + 1}.jpg`}
-                          className="text-sm font-semibold text-primary hover:underline"
-                        >
-                          Download
-                        </a>
-                        {transcriptEpisodeId && projectRoster.length > 0 ? (
-                          <select
-                            className="w-full rounded-md border border-border bg-surface px-1 py-1.5 text-xs font-medium text-foreground disabled:opacity-50"
-                            defaultValue=""
-                            disabled={avatarBusyIndex === i}
-                            onChange={(e) => {
-                              const cid = e.target.value;
-                              if (!cid || !transcriptEpisodeId) return;
-                              if (avatarBusyIndex !== null) {
-                                e.target.value = "";
-                                return;
-                              }
-                              const selectEl = e.target;
-                              setAvatarBusyIndex(i);
-                              void (async () => {
-                                try {
-                                  await api.setCharacterAvatarFromEpisodeThumb(cid, {
-                                    episode_id: transcriptEpisodeId,
-                                    thumb_index: i,
-                                  });
-                                  toast("Character photo updated");
-                                } catch {
-                                  toast("Could not update character photo");
-                                } finally {
-                                  selectEl.value = "";
-                                  setAvatarBusyIndex(null);
-                                }
-                              })();
-                            }}
-                          >
-                            <option value="">
-                              {avatarBusyIndex === i ? "Updating…" : "Use as character photo…"}
-                            </option>
-                            {projectRoster.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <p className="text-xs text-foreground/65">Add characters to assign photos.</p>
-                        )}
-                      </div>
+            {importBottomAssetsPending && mediaDone ? (
+              <>
+                <Panel className="rounded-2xl border-2 border-border bg-card p-5 shadow-soft">
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                        <Film className="h-5 w-5 text-primary" />
+                        Frames from this import
+                      </h2>
+                      <p className="mt-1 text-sm text-foreground/80">
+                        Loading this episode's stills and line audio…
+                      </p>
                     </div>
-                  ))}
-                </div>
-              </Panel>
-            ) : mediaDone ? (
-              <Panel className="rounded-2xl border border-dashed border-border bg-card/80 p-5 shadow-soft">
-                <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
-                  <Film className="h-5 w-5 text-muted-foreground" />
-                  Frames
-                </h2>
-                <p className="mt-2 text-sm leading-relaxed text-foreground/80">
-                  No frame thumbnails were extracted for this import. Re-import the file if you
-                  expected stills here.
-                </p>
-              </Panel>
-            ) : null}
-
-            <Panel className="rounded-2xl border border-border bg-card p-5 shadow-soft">
-              <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
-                <Layers className="h-5 w-5 text-primary" />
-                Saved line audio & clips
-              </h2>
-              <p className="mt-1 text-sm text-foreground/80">
-                Line audio saved for this episode, plus project clip export.
-              </p>
-              {activeProjectId && projectClipCount > 0 ? (
-                <a
-                  href={api.projectClipsZipUrl(activeProjectId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-3 inline-flex items-center gap-2 text-base font-semibold text-primary hover:underline"
-                >
-                  <Package className="h-5 w-5" />
-                  Download all clips .zip ({projectClipCount})
-                </a>
-              ) : (
-                <p className="mt-3 text-sm text-foreground/75">
-                  No project clip bundle yet. Generate line audio or clips from Voice Studio.
-                </p>
-              )}
-              <ul className="mt-4 divide-y divide-border rounded-xl border-2 border-border">
-                {episodeReplacementsForWorkspace.length === 0 ? (
-                  <li className="px-4 py-5 text-base text-foreground/75">
-                    No saved line audio for this episode yet.
-                  </li>
-                ) : (
-                  episodeReplacementsForWorkspace.map((r) => (
-                    <li
-                      key={r.replacement_id}
-                      className="flex flex-wrap items-start justify-between gap-3 px-4 py-4"
+                  </div>
+                  <div
+                    className="mt-4 flex min-h-[200px] gap-4 overflow-x-auto pb-2"
+                    aria-hidden
+                  >
+                    {[0, 1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className="h-40 w-44 shrink-0 snap-start rounded-xl bg-foreground/[0.08] ring-2 ring-border/70 motion-safe:animate-pulse"
+                      />
+                    ))}
+                  </div>
+                </Panel>
+                <Panel className="rounded-2xl border border-border bg-card p-5 shadow-soft">
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                    <Layers className="h-5 w-5 text-primary" />
+                    Saved line audio & clips
+                  </h2>
+                  <p className="mt-1 text-sm text-foreground/80">
+                    Line audio saved for this episode, plus project clip export.
+                  </p>
+                  {activeProjectId && projectClipCount > 0 ? (
+                    <a
+                      href={api.projectClipsZipUrl(activeProjectId)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-flex items-center gap-2 text-base font-semibold text-primary hover:underline"
                     >
-                      <div className="min-w-0">
-                        <p className="text-base font-semibold text-foreground">{r.character_name}</p>
-                        <p className="mt-1 line-clamp-2 text-sm text-foreground/80">
-                          {r.replacement_text}
+                      <Package className="h-5 w-5" />
+                      Download all clips .zip ({projectClipCount})
+                    </a>
+                  ) : (
+                    <p className="mt-3 text-sm text-foreground/75">
+                      No project clip bundle yet. Generate line audio or clips from Voice Studio.
+                    </p>
+                  )}
+                  <ul
+                    className="mt-4 min-h-[200px] divide-y divide-border rounded-xl border-2 border-border"
+                    aria-busy
+                    aria-label="Loading saved line audio"
+                  >
+                    {[0, 1, 2].map((i) => (
+                      <li key={i} className="px-4 py-4">
+                        <div className="h-4 w-40 rounded bg-foreground/10 motion-safe:animate-pulse" />
+                        <div className="mt-3 h-3 w-full max-w-md rounded bg-foreground/10 motion-safe:animate-pulse" />
+                      </li>
+                    ))}
+                  </ul>
+                </Panel>
+              </>
+            ) : (
+              <>
+                {mediaDone && mediaDone.thumbnail_paths.length > 0 ? (
+                  <Panel className="rounded-2xl border-2 border-border bg-card p-5 shadow-soft">
+                    <div className="flex flex-wrap items-end justify-between gap-3">
+                      <div>
+                        <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                          <Film className="h-5 w-5 text-primary" />
+                          Frames from this import
+                        </h2>
+                        <p className="mt-1 text-sm text-foreground/80">
+                          Stills from the active episode. Scroll horizontally on small screens. Assign
+                          a frame as a character photo below.
                         </p>
                       </div>
-                      <div className="flex shrink-0 flex-wrap gap-2">
-                        {r.audio_url ? (
-                          <audio
-                            controls
-                            className="h-9 max-w-[240px]"
-                            src={mediaUrl(r.audio_url.replace(/^\/media\//, ""))}
-                          />
-                        ) : null}
-                        <Link
-                          href={`/replace-lines?episode=${encodeURIComponent(r.episode_id)}&segment=${encodeURIComponent(r.segment_id)}`}
-                          className="inline-flex items-center rounded-lg border-2 border-border bg-surface px-3 py-2 text-sm font-semibold text-foreground hover:bg-white/[0.06]"
+                    </div>
+                    <div className="mt-4 flex min-h-[200px] gap-4 overflow-x-auto pb-2">
+                      {mediaDone.thumbnail_paths.map((rel, i) => (
+                        <div
+                          key={rel}
+                          className="w-44 shrink-0 snap-start overflow-hidden rounded-xl ring-2 ring-border"
                         >
-                          Advanced
-                        </Link>
-                      </div>
-                    </li>
-                  ))
-                )}
-              </ul>
-            </Panel>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={mediaUrl(rel)}
+                            alt={`Frame ${i + 1}`}
+                            className="h-32 w-full object-cover"
+                          />
+                          <div className="flex flex-col gap-1.5 border-t border-border bg-card px-2 py-2">
+                            <a
+                              href={mediaUrl(rel)}
+                              download={`castweave-frame-${i + 1}.jpg`}
+                              className="text-sm font-semibold text-primary hover:underline"
+                            >
+                              Download
+                            </a>
+                            {transcriptEpisodeId && projectRoster.length > 0 ? (
+                              <select
+                                className="w-full rounded-md border border-border bg-surface px-1 py-1.5 text-xs font-medium text-foreground disabled:opacity-50"
+                                defaultValue=""
+                                disabled={avatarBusyIndex === i}
+                                onChange={(e) => {
+                                  const cid = e.target.value;
+                                  if (!cid || !transcriptEpisodeId) return;
+                                  if (avatarBusyIndex !== null) {
+                                    e.target.value = "";
+                                    return;
+                                  }
+                                  const selectEl = e.target;
+                                  setAvatarBusyIndex(i);
+                                  void (async () => {
+                                    try {
+                                      await api.setCharacterAvatarFromEpisodeThumb(cid, {
+                                        episode_id: transcriptEpisodeId,
+                                        thumb_index: i,
+                                      });
+                                      toast("Character photo updated");
+                                    } catch {
+                                      toast("Could not update character photo");
+                                    } finally {
+                                      selectEl.value = "";
+                                      setAvatarBusyIndex(null);
+                                    }
+                                  })();
+                                }}
+                              >
+                                <option value="">
+                                  {avatarBusyIndex === i
+                                    ? "Updating…"
+                                    : "Use as character photo…"}
+                                </option>
+                                {projectRoster.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <p className="text-xs text-foreground/65">Add characters to assign photos.</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Panel>
+                ) : mediaDone ? (
+                  <Panel className="rounded-2xl border border-dashed border-border bg-card/80 p-5 shadow-soft">
+                    <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                      <Film className="h-5 w-5 text-muted-foreground" />
+                      Frames
+                    </h2>
+                    <p className="mt-2 min-h-[200px] text-sm leading-relaxed text-foreground/80">
+                      No frame thumbnails were extracted for this import. Re-import the file if you
+                      expected stills here.
+                    </p>
+                  </Panel>
+                ) : null}
+
+                <Panel className="rounded-2xl border border-border bg-card p-5 shadow-soft">
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                    <Layers className="h-5 w-5 text-primary" />
+                    Saved line audio & clips
+                  </h2>
+                  <p className="mt-1 text-sm text-foreground/80">
+                    Line audio saved for this episode, plus project clip export.
+                  </p>
+                  {activeProjectId && projectClipCount > 0 ? (
+                    <a
+                      href={api.projectClipsZipUrl(activeProjectId)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-flex items-center gap-2 text-base font-semibold text-primary hover:underline"
+                    >
+                      <Package className="h-5 w-5" />
+                      Download all clips .zip ({projectClipCount})
+                    </a>
+                  ) : (
+                    <p className="mt-3 text-sm text-foreground/75">
+                      No project clip bundle yet. Generate line audio or clips from Voice Studio.
+                    </p>
+                  )}
+                  <ul className="mt-4 min-h-[200px] divide-y divide-border rounded-xl border-2 border-border">
+                    {episodeReplacementsForWorkspace.length === 0 ? (
+                      <li className="px-4 py-5 text-base text-foreground/75">
+                        No saved line audio for this episode yet.
+                      </li>
+                    ) : (
+                      episodeReplacementsForWorkspace.map((r) => (
+                        <li
+                          key={r.replacement_id}
+                          className="flex flex-wrap items-start justify-between gap-3 px-4 py-4"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-base font-semibold text-foreground">{r.character_name}</p>
+                            <p className="mt-1 line-clamp-2 text-sm text-foreground/80">
+                              {r.replacement_text}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 flex-wrap gap-2">
+                            {r.audio_url ? (
+                              <audio
+                                key={`${r.replacement_id}-${r.updated_at}`}
+                                controls
+                                className="h-9 max-w-[240px]"
+                                src={mediaUrlWithCacheBust(
+                                  r.audio_url.replace(/^\/media\//, ""),
+                                  r.updated_at,
+                                )}
+                              />
+                            ) : null}
+                            <Link
+                              href={`/replace-lines?episode=${encodeURIComponent(r.episode_id)}&segment=${encodeURIComponent(r.segment_id)}`}
+                              className="inline-flex items-center rounded-lg border-2 border-border bg-surface px-3 py-2 text-sm font-semibold text-foreground hover:bg-white/[0.06]"
+                            >
+                              Advanced
+                            </Link>
+                          </div>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </Panel>
+              </>
+            )}
           </div>
         </div>
         </div>

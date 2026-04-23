@@ -11,6 +11,25 @@ from db.records import TranscriptSegmentRecord
 
 log = logging.getLogger("characpilot.normalize")
 
+# ---------------------------------------------------------------------------
+# indic-transliteration: try to import at module level so we use the better
+# library consistently.  Fall back to the built-in map only when the package
+# is genuinely absent (log a warning once so operators know quality is lower).
+# ---------------------------------------------------------------------------
+try:
+    from indic_transliteration import sanscript as _sanscript
+    from indic_transliteration.sanscript import transliterate as _indic_transliterate
+    _HAS_INDIC_LIB = True
+except ImportError:
+    _sanscript = None  # type: ignore[assignment]
+    _indic_transliterate = None  # type: ignore[assignment]
+    _HAS_INDIC_LIB = False
+    log.warning(
+        "indic-transliteration is not installed; Roman Hindi quality will be "
+        "degraded (using built-in char map fallback). Install with: "
+        "pip install indic-transliteration"
+    )
+
 # Devanagari block (+ common joiners)
 _DEVANAGARI_RE = re.compile(r"[\u0900-\u097F\u200c\u200d]")
 
@@ -128,10 +147,7 @@ def _builtin_devanagari_to_roman(text: str) -> str:
 
 def _devanagari_chunks_to_hk(text: str) -> str:
     """Devanagari runs -> Harvard-Kyoto ASCII (internal bridge only, not shown)."""
-    try:
-        from indic_transliteration import sanscript
-        from indic_transliteration.sanscript import transliterate
-    except ImportError:
+    if not _HAS_INDIC_LIB:
         return _builtin_devanagari_to_roman(text)
 
     parts: list[str] = []
@@ -143,7 +159,7 @@ def _devanagari_chunks_to_hk(text: str) -> str:
         chunk = "".join(buf)
         if _DEVANAGARI_RE.search(chunk):
             try:
-                chunk = transliterate(chunk, sanscript.DEVANAGARI, sanscript.HK)
+                chunk = _indic_transliterate(chunk, _sanscript.DEVANAGARI, _sanscript.HK)
             except Exception:
                 chunk = _builtin_devanagari_to_roman("".join(buf))
         parts.append(chunk)
@@ -228,15 +244,22 @@ def _enforce_roman_hindi_display(s: str) -> str:
 
 
 def _hindi_display_quality_ok(display: str) -> bool:
-    """True if the line has *any* readable content — placeholder only for empty results."""
+    """True if the Roman Hindi display has enough readable content to be useful.
+
+    Reject lines that are a single short word, have fewer than 2 Latin letters,
+    or consist only of non-letter characters.  When this returns False the caller
+    should substitute a placeholder while keeping Devanagari in text_original.
+    """
     s = display.strip()
     if not s:
         return False
-    if _LATIN_LETTERS_RE.search(s):
-        return True
-    if len(s) >= 2:
-        return True
-    return False
+    latin_count = len(_LATIN_LETTERS_RE.findall(s))
+    if latin_count < 2:
+        return False
+    words = re.findall(r"[A-Za-z]+", s)
+    if len(words) == 1 and len(words[0]) <= 2:
+        return False
+    return True
 
 
 _HINDI_DIAG = os.environ.get("CASTWEAVE_HINDI_DIAG", "").strip().lower() in ("1", "true", "yes")

@@ -94,7 +94,7 @@ class PatchCharacterBody(BaseModel):
 class GeneratePreviewBody(BaseModel):
     text: str
     voice_id: str | None = None
-    style: str | None = None
+    style: str | None = None  # Accepted for API compat but ignored; not applied to TTS.
     save_clip: bool = True
     clip_title: str | None = None
 

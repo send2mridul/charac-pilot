@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Clapperboard, Mic2, Trash2, Wand2 } from "lucide-react";
 import { api } from "@/lib/api/client";
-import { mediaUrl } from "@/lib/api/media";
+import { mediaUrlWithCacheBust } from "@/lib/api/media";
 import { ApiError } from "@/lib/api/errors";
 import type {
   CharacterDto,
@@ -58,7 +58,6 @@ function ReplaceLinesContent() {
   const [selectedSegId, setSelectedSegId] = useState<string | null>(null);
   const [characterId, setCharacterId] = useState<string>("");
   const [replacementText, setReplacementText] = useState("");
-  const [toneStyle, setToneStyle] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingRepId, setEditingRepId] = useState<string | null>(null);
@@ -200,7 +199,6 @@ function ReplaceLinesContent() {
           editingRepId,
           {
             replacement_text: replacementText.trim(),
-            tone_style: toneStyle.trim() || undefined,
             regenerate_audio: true,
           },
         );
@@ -215,7 +213,6 @@ function ReplaceLinesContent() {
           {
             character_id: characterId,
             replacement_text: replacementText.trim(),
-            tone_style: toneStyle.trim() || undefined,
           },
         );
         setReplacements((prev) => [created, ...prev]);
@@ -258,7 +255,6 @@ function ReplaceLinesContent() {
     setSelectedSegId(rep.segment_id);
     setCharacterId(rep.character_id);
     setReplacementText(rep.replacement_text);
-    setToneStyle(rep.tone_style ?? "");
   }
 
   const active = projects.find((p) => p.id === activeProjectId);
@@ -456,21 +452,6 @@ function ReplaceLinesContent() {
                   />
                 </div>
 
-                <div>
-                  <label className="text-[11px] font-semibold uppercase text-muted">
-                    Tone / style hint (optional)
-                  </label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
-                    value={toneStyle}
-                    onChange={(e) => setToneStyle(e.target.value)}
-                    placeholder="e.g. whisper, urgent, dry"
-                  />
-                  <p className="mt-1 text-[11px] text-muted">
-                    Hints may behave differently depending on the active audio engine.
-                  </p>
-                </div>
-
                 <div className="flex flex-wrap gap-2">
                   <Button
                     onClick={() => void handleGenerate()}
@@ -576,9 +557,13 @@ function ReplaceLinesContent() {
                     </div>
                   </div>
                   <audio
+                    key={`${r.replacement_id}-${r.updated_at}`}
                     controls
                     className="mt-3 w-full max-w-md"
-                    src={mediaUrl(r.audio_url.replace(/^\/media\//, ""))}
+                    src={mediaUrlWithCacheBust(
+                      r.audio_url.replace(/^\/media\//, ""),
+                      r.updated_at,
+                    )}
                   />
                 </li>
               ))}

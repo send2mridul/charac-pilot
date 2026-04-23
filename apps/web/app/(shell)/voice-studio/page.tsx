@@ -9,6 +9,7 @@ import {
   LayoutGrid,
   Library,
   Mic2,
+  Play,
   Plus,
   Search,
   Sparkles,
@@ -93,8 +94,8 @@ function VoiceStudioContent() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [chosenVoiceId, setChosenVoiceId] = useState<string>("");
+  const [rowPreviewBusyId, setRowPreviewBusyId] = useState<string | null>(null);
   const [sampleText, setSampleText] = useState("");
-  const [styleInput, setStyleInput] = useState("");
   const [generating, setGenerating] = useState(false);
   const [preview, setPreview] = useState<PreviewDto | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -315,7 +316,6 @@ function VoiceStudioContent() {
     if (!c) return;
     setChosenVoiceId(c.default_voice_id ?? "");
     setSampleText(c.sample_texts[0] ?? "");
-    setStyleInput("");
     setPreview(null);
     setPreviewError(null);
     setSaveSuccess(false);
@@ -388,11 +388,7 @@ function VoiceStudioContent() {
     try {
       const oldIds = new Set(clips.map((c) => c.id));
       await api.generateCharacterClipsFromLines(selected.id, {
-        lines: lines.map((text) => ({
-          text,
-          tone_style: styleInput.trim() || "",
-        })),
-        style: styleInput.trim() || undefined,
+        lines: lines.map((text) => ({ text, tone_style: "" })),
         clip_label_prefix: clipLabel.trim() || undefined,
         voice_id: selected.default_voice_id || undefined,
       });
@@ -472,10 +468,7 @@ function VoiceStudioContent() {
       return;
     }
     const lines = promptLines
-      .map((x) => ({
-        text: x.text.trim(),
-        tone_style: (x.tone_style || "").trim(),
-      }))
+      .map((x) => ({ text: x.text.trim(), tone_style: "" }))
       .filter((x) => x.text);
     if (lines.length === 0) {
       setPreviewError("Generate and keep at least one line before audio generation.");
@@ -543,6 +536,29 @@ function VoiceStudioContent() {
       setClips((prev) => prev.filter((c) => c.id !== clipId));
     } finally {
       setClipBusyId(null);
+    }
+  }
+
+  async function previewVoiceRow(voiceId: string) {
+    if (!selected?.id || rowPreviewBusyId) return;
+    setRowPreviewBusyId(voiceId);
+    try {
+      const txt =
+        sampleText.trim() || "This is a short preview of this voice.";
+      const result = await api.generatePreview(selected.id, {
+        text: txt,
+        voice_id: voiceId,
+        save_clip: false,
+      });
+      await playVoicePreview(
+        mediaUrl(result.audio_url.replace(/^\/media\//, "")),
+      );
+    } catch (e) {
+      toast(
+        e instanceof ApiError ? e.message : "Could not preview this voice",
+      );
+    } finally {
+      setRowPreviewBusyId(null);
     }
   }
 
@@ -1015,7 +1031,9 @@ function VoiceStudioContent() {
                       </div>
                       <div>
                         <p className="font-semibold text-text">Browse catalog</p>
-                        <p className="text-xs text-muted">Pick a ready voice</p>
+                        <p className="text-xs text-muted">
+                          Pick a ready voice. Use the play button to preview without saving.
+                        </p>
                       </div>
                     </div>
                     {voiceHub ? (
@@ -1050,13 +1068,45 @@ function VoiceStudioContent() {
                             const active = chosenVoiceId === v.voice_id;
                             const charName = characters.find((c) => c.default_voice_id === v.voice_id)?.name;
                             return (
-                              <button key={v.voice_id} type="button" className={`w-full border-b border-white/[0.05] px-3 py-2.5 text-left text-sm last:border-b-0 ${active ? "bg-accent/12" : "hover:bg-white/[0.03]"}`} onClick={() => setChosenVoiceId(v.voice_id)}>
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="font-medium text-text">{v.display_name}</span>
-                                  <span className="flex items-center gap-1">{charName ? <Badge tone="default">{charName}</Badge> : null}{active ? <Badge tone="accent">Selected</Badge> : null}</span>
-                                </div>
-                                {v.description ? <p className="line-clamp-1 text-[11px] text-muted">{v.description}</p> : null}
-                              </button>
+                              <div
+                                key={v.voice_id}
+                                className={`flex w-full items-stretch border-b border-white/[0.05] last:border-b-0 ${
+                                  active ? "bg-accent/12 ring-1 ring-inset ring-accent/30" : ""
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  className="min-w-0 flex-1 px-3 py-2.5 text-left text-sm hover:bg-white/[0.03]"
+                                  onClick={() => setChosenVoiceId(v.voice_id)}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-medium text-text">{v.display_name}</span>
+                                    <span className="flex items-center gap-1">
+                                      {charName ? <Badge tone="default">{charName}</Badge> : null}
+                                      {active ? <Badge tone="accent">Selected</Badge> : null}
+                                    </span>
+                                  </div>
+                                  {v.description ? (
+                                    <p className="line-clamp-1 text-[11px] text-muted">{v.description}</p>
+                                  ) : null}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!selected?.id || rowPreviewBusyId !== null}
+                                  className="flex w-11 shrink-0 items-center justify-center border-l border-white/[0.06] text-muted hover:bg-white/[0.06] hover:text-text disabled:opacity-40"
+                                  aria-label={`Preview ${v.display_name}`}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    void previewVoiceRow(v.voice_id);
+                                  }}
+                                >
+                                  {rowPreviewBusyId === v.voice_id ? (
+                                    <Spinner className="h-4 w-4 border-t-accent" />
+                                  ) : (
+                                    <Play className="h-4 w-4 fill-current" />
+                                  )}
+                                </button>
+                              </div>
                             );
                           })}
                         </>
@@ -1067,13 +1117,42 @@ function VoiceStudioContent() {
                           {createdVoices.map((v) => {
                             const active = chosenVoiceId === v.voice_id;
                             return (
-                              <button key={v.voice_id} type="button" className={`w-full border-b border-white/[0.05] px-3 py-2.5 text-left text-sm last:border-b-0 ${active ? "bg-accent/12" : "hover:bg-white/[0.03]"}`} onClick={() => setChosenVoiceId(v.voice_id)}>
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="font-medium text-text">{v.display_name}</span>
-                                  {active ? <Badge tone="accent">Selected</Badge> : null}
-                                </div>
-                                {v.description ? <p className="line-clamp-1 text-[11px] text-muted">{v.description}</p> : null}
-                              </button>
+                              <div
+                                key={v.voice_id}
+                                className={`flex w-full items-stretch border-b border-white/[0.05] last:border-b-0 ${
+                                  active ? "bg-accent/12 ring-1 ring-inset ring-accent/30" : ""
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  className="min-w-0 flex-1 px-3 py-2.5 text-left text-sm hover:bg-white/[0.03]"
+                                  onClick={() => setChosenVoiceId(v.voice_id)}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-medium text-text">{v.display_name}</span>
+                                    {active ? <Badge tone="accent">Selected</Badge> : null}
+                                  </div>
+                                  {v.description ? (
+                                    <p className="line-clamp-1 text-[11px] text-muted">{v.description}</p>
+                                  ) : null}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!selected?.id || rowPreviewBusyId !== null}
+                                  className="flex w-11 shrink-0 items-center justify-center border-l border-white/[0.06] text-muted hover:bg-white/[0.06] hover:text-text disabled:opacity-40"
+                                  aria-label={`Preview ${v.display_name}`}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    void previewVoiceRow(v.voice_id);
+                                  }}
+                                >
+                                  {rowPreviewBusyId === v.voice_id ? (
+                                    <Spinner className="h-4 w-4 border-t-accent" />
+                                  ) : (
+                                    <Play className="h-4 w-4 fill-current" />
+                                  )}
+                                </button>
+                              </div>
                             );
                           })}
                         </>
@@ -1084,13 +1163,42 @@ function VoiceStudioContent() {
                           {catalogVoices.map((v) => {
                             const active = chosenVoiceId === v.voice_id;
                             return (
-                              <button key={v.voice_id} type="button" className={`w-full border-b border-white/[0.05] px-3 py-2.5 text-left text-sm last:border-b-0 ${active ? "bg-accent/12" : "hover:bg-white/[0.03]"}`} onClick={() => setChosenVoiceId(v.voice_id)}>
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="font-medium text-text">{v.display_name}</span>
-                                  {active ? <Badge tone="accent">Selected</Badge> : null}
-                                </div>
-                                {v.description ? <p className="line-clamp-2 text-[11px] text-muted">{v.description}</p> : null}
-                              </button>
+                              <div
+                                key={v.voice_id}
+                                className={`flex w-full items-stretch border-b border-white/[0.05] last:border-b-0 ${
+                                  active ? "bg-accent/12 ring-1 ring-inset ring-accent/30" : ""
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  className="min-w-0 flex-1 px-3 py-2.5 text-left text-sm hover:bg-white/[0.03]"
+                                  onClick={() => setChosenVoiceId(v.voice_id)}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-medium text-text">{v.display_name}</span>
+                                    {active ? <Badge tone="accent">Selected</Badge> : null}
+                                  </div>
+                                  {v.description ? (
+                                    <p className="line-clamp-2 text-[11px] text-muted">{v.description}</p>
+                                  ) : null}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!selected?.id || rowPreviewBusyId !== null}
+                                  className="flex w-11 shrink-0 items-center justify-center border-l border-white/[0.06] text-muted hover:bg-white/[0.06] hover:text-text disabled:opacity-40"
+                                  aria-label={`Preview ${v.display_name}`}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    void previewVoiceRow(v.voice_id);
+                                  }}
+                                >
+                                  {rowPreviewBusyId === v.voice_id ? (
+                                    <Spinner className="h-4 w-4 border-t-accent" />
+                                  ) : (
+                                    <Play className="h-4 w-4 fill-current" />
+                                  )}
+                                </button>
+                              </div>
                             );
                           })}
                         </>
@@ -1283,12 +1391,6 @@ function VoiceStudioContent() {
                       )}
                       <input
                         className="w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
-                        placeholder="Tone / style for clips (optional)"
-                        value={styleInput}
-                        onChange={(e) => setStyleInput(e.target.value)}
-                      />
-                      <input
-                        className="w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
                         placeholder="Clip label prefix (optional)"
                         value={clipLabel}
                         onChange={(e) => setClipLabel(e.target.value)}
@@ -1346,19 +1448,7 @@ function VoiceStudioContent() {
                                 )
                               }
                             />
-                            <div className="flex gap-2">
-                              <input
-                                className="flex-1 rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none focus:border-accent/40"
-                                placeholder="Tone"
-                                value={line.tone_style}
-                                onChange={(e) =>
-                                  setPromptLines((prev) =>
-                                    prev.map((x) =>
-                                      x.id === line.id ? { ...x, tone_style: e.target.value } : x,
-                                    ),
-                                  )
-                                }
-                              />
+                            <div className="flex justify-end">
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -1456,9 +1546,6 @@ function VoiceStudioContent() {
                               {freshClipIds.has(cl.id) ? <Badge tone="success">New</Badge> : null}
                             </div>
                             <p className="mt-2 text-xs text-muted whitespace-pre-wrap">{cl.text}</p>
-                            {cl.tone_style_hint ? (
-                              <p className="mt-1 text-[11px] text-muted">Tone: {cl.tone_style_hint}</p>
-                            ) : null}
                             <audio
                               controls
                               className="mt-2 h-9 w-full"

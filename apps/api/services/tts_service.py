@@ -87,8 +87,11 @@ def _generate_elevenlabs(
     vid = _resolve_elevenlabs_voice_id(voice_id)
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}"
     model_id = os.environ.get("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2"
+    # `style` is not applied: prepending it to `text` was read aloud. No non-spoken
+    # free-text control is available on this path; see product/UI for line generation.
+    _ = style
     body: dict = {
-        "text": text,
+        "text": (text or "").strip(),
         "model_id": model_id,
         "voice_settings": {
             "stability": 0.5,

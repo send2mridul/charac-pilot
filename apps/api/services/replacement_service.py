@@ -108,7 +108,7 @@ def create_replacement(
     _duration_ms, provider, fallback, final_path = synthesize_line_to_file(
         synth_text,
         voice_id,
-        tone_style,
+        None,
         out_base,
         language_code=lang_code,
     )
@@ -208,7 +208,7 @@ def patch_replacement(
         _duration_ms, provider, fallback, final_path = synthesize_line_to_file(
             synth,
             ch.default_voice_id,
-            new_tone,
+            None,
             out_base,
             language_code=lang_code,
         )

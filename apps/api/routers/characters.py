@@ -63,12 +63,11 @@ def _generate_and_store_clips(
         text = (line_in.text or "").strip()
         if not text:
             continue
-        line_style = (line_in.tone_style or "").strip() or default_style
         result = generate_preview(
             character_id=character_id,
             text=text,
             voice_id=voice_id,
-            style=line_style or None,
+            style=None,
         )
         provider_used = str(result.get("provider") or provider_used)
         rel_preview = str(result.get("audio_relpath") or "")
@@ -93,7 +92,7 @@ def _generate_and_store_clips(
             voice_id=voice_id,
             voice_name=voice_name,
             text=text,
-            tone_style_hint=line_style,
+            tone_style_hint="",
             audio_path=clip_rel,
             title=title,
         )
@@ -198,7 +197,7 @@ def generate_preview_endpoint(character_id: str, body: GeneratePreviewBody):
             character_id=character_id,
             text=body.text,
             voice_id=body.voice_id or c.default_voice_id,
-            style=body.style,
+            style=None,
         )
     except Exception as e:
         log.exception("generate-preview failed character_id=%s", character_id)
@@ -224,7 +223,7 @@ def generate_preview_endpoint(character_id: str, body: GeneratePreviewBody):
             clip_rel = to_rel_storage_path(dest)
             vid = (body.voice_id or c.default_voice_id) or ""
             vname = (c.voice_display_name or "") if c else ""
-            hint = (body.style or "").strip()
+            hint = ""
             title_raw = (body.clip_title or "").strip()
             title = title_raw or f"Line {clip_uid[-4:]}"
             rec = store.create_voice_clip(

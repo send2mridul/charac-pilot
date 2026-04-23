@@ -59,7 +59,7 @@ def _model_size_for_language(language: str | None) -> str:
     """Per-language model tier. Hindi uses a larger model by default."""
     base_default = _env("WHISPER_MODEL_SIZE", "base").lower()
     if language == "hi":
-        return _env("WHISPER_MODEL_SIZE_HI", "small").lower()
+        return _env("WHISPER_MODEL_SIZE_HI", "medium").lower()
     return _env("WHISPER_MODEL_SIZE_EN", base_default).lower()
 
 
@@ -201,7 +201,7 @@ def transcribe_wav_to_records(
     Env:
       WHISPER_MODEL_SIZE         - legacy default (base)
       WHISPER_MODEL_SIZE_EN      - English tier (default: base)
-      WHISPER_MODEL_SIZE_HI      - Hindi tier (default: small)
+      WHISPER_MODEL_SIZE_HI      - Hindi tier (default: medium)
       WHISPER_DEVICE             - cpu | cuda (default: cpu)
       WHISPER_COMPUTE_TYPE       - int8 | float16 (default: int8 on cpu)
       CASTWEAVE_FORCE_HINDI      - 1/true to skip detect and force Hindi

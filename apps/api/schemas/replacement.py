@@ -48,10 +48,10 @@ class ReplacementOut(BaseModel):
 class ReplaceSegmentBody(BaseModel):
     character_id: str = Field(..., min_length=1)
     replacement_text: str = Field(..., min_length=1)
-    tone_style: str | None = None
+    tone_style: str | None = None  # Accepted for API compat but ignored; not applied to TTS.
 
 
 class PatchReplacementBody(BaseModel):
     replacement_text: str | None = None
-    tone_style: str | None = None
+    tone_style: str | None = None  # Accepted for API compat but ignored; not applied to TTS.
     regenerate_audio: bool = False
