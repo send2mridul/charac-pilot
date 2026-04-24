@@ -1,5 +1,5 @@
 {
-  "installCommand": "rm -f package-lock.json && npm install",
+  "installCommand": "rm -f package-lock.json && npm install && bash scripts/fix-lightningcss.sh",
   "buildCommand": "npm run build -w web",
   "framework": "nextjs",
   "outputDirectory": "apps/web/.next"
