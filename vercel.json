@@ -1,5 +1,5 @@
 {
-  "installCommand": "rm -f package-lock.json && npm install && (cp node_modules/lightningcss-linux-x64-gnu/lightningcss.linux-x64-gnu.node node_modules/lightningcss/ 2>/dev/null || (npm i lightningcss-linux-x64-gnu --no-save --no-package-lock && cp node_modules/lightningcss-linux-x64-gnu/lightningcss.linux-x64-gnu.node node_modules/lightningcss/))",
+  "installCommand": "rm -f package-lock.json&&npm i&&node -e \"f=require('fs');s='node_modules/lightningcss-linux-x64-gnu/lightningcss.linux-x64-gnu.node';f.existsSync(s)&&f.copyFileSync(s,s.replace('-linux-x64-gnu/','/'))||0\"",
   "buildCommand": "npm run build -w web",
   "framework": "nextjs",
   "outputDirectory": "apps/web/.next"
