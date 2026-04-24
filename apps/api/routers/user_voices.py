@@ -8,8 +8,9 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
+from auth import check_ownership, require_user_id
 from db.store import store
 from schemas.user_voice import UserVoiceOut
 from services.ffmpeg_bin import get_ffmpeg_paths
@@ -109,6 +110,7 @@ async def _save_and_clone(
     rights_type: str,
     rights_note: str,
     source_type: str,
+    user_id: str | None = None,
 ) -> UserVoiceOut:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
@@ -151,6 +153,7 @@ async def _save_and_clone(
         sample_audio_path=sample_rel,
         rights_type=rights_type,
         rights_note=rights_note.strip(),
+        user_id=user_id,
     )
     log.info("user voice created id=%s type=%s el_id=%s", voice_id, source_type, el_voice_id)
     return _to_out(rec)
@@ -162,8 +165,9 @@ async def upload_user_voice(
     name: str = Form("My voice"),
     rights_type: str = Form(...),
     rights_note: str = Form(""),
+    user_id: str = Depends(require_user_id),
 ):
-    return await _save_and_clone(file, name, rights_type, rights_note, "uploaded")
+    return await _save_and_clone(file, name, rights_type, rights_note, "uploaded", user_id=user_id)
 
 
 @router.post("/from-recording", response_model=UserVoiceOut)
@@ -172,17 +176,19 @@ async def upload_recorded_voice(
     name: str = Form("My recorded voice"),
     rights_type: str = Form(...),
     rights_note: str = Form(""),
+    user_id: str = Depends(require_user_id),
 ):
-    return await _save_and_clone(file, name, rights_type, rights_note, "recorded")
+    return await _save_and_clone(file, name, rights_type, rights_note, "recorded", user_id=user_id)
 
 
 @router.get("", response_model=list[UserVoiceOut])
-def list_user_voices():
-    return [_to_out(r) for r in store.list_user_voices()]
+def list_user_voices(user_id: str = Depends(require_user_id)):
+    return [_to_out(r) for r in store.list_user_voices(user_id=user_id)]
 
 
 @router.delete("/{voice_id}", status_code=204)
-def delete_user_voice(voice_id: str):
+def delete_user_voice(voice_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(store.user_voice_owner_id(voice_id), user_id)
     from services.r2_storage import bucket_for_key, delete_object, delete_prefix, r2_configured, artifacts_bucket
     rec = store.delete_user_voice(voice_id)
     if not rec:

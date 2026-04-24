@@ -5,8 +5,11 @@ import time
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import StreamingResponse
+
+from auth import check_ownership, require_user_id
+from db.store import store as _store
 
 from schemas.character import (
     CharacterOut,
@@ -43,16 +46,16 @@ _MEDIA_SUFFIXES = _VIDEO_SUFFIXES | _AUDIO_SUFFIXES
 
 
 @router.get("", response_model=list[ProjectOut])
-def list_projects():
-    return project_service.list_projects()
+def list_projects(user_id: str = Depends(require_user_id)):
+    return project_service.list_projects(user_id=user_id)
 
 
 @router.post("", response_model=ProjectOut)
-def create_project(body: ProjectCreate):
-    return project_service.create_project(body)
+def create_project(body: ProjectCreate, user_id: str = Depends(require_user_id)):
+    return project_service.create_project(body, user_id=user_id)
 
 
-def _delete_project_response(project_id: str) -> Response:
+def _delete_project_response(project_id: str, user_id: str) -> Response:
     import shutil
     from services.r2_storage import (
         artifacts_bucket,
@@ -61,8 +64,7 @@ def _delete_project_response(project_id: str) -> Response:
         uploads_bucket,
     )
 
-    if not project_service.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
+    check_ownership(_store.project_owner_id(project_id), user_id)
     project_service.delete_project(project_id)
     project_upload_dir = UPLOADS_ROOT / project_id
     if project_upload_dir.is_dir():
@@ -82,9 +84,8 @@ def _delete_project_response(project_id: str) -> Response:
 
 
 @router.post("/delete/{project_id}", status_code=204)
-def post_delete_project_path_prefix(project_id: str):
-    """Same as POST /{project_id}/delete; alternate URL for strict proxies and older clients."""
-    return _delete_project_response(project_id)
+def post_delete_project_path_prefix(project_id: str, user_id: str = Depends(require_user_id)):
+    return _delete_project_response(project_id, user_id)
 
 
 # --- More specific /{project_id}/... routes first, then mutating verbs, then GET by id.
@@ -92,19 +93,16 @@ def post_delete_project_path_prefix(project_id: str):
 
 
 @router.get("/{project_id}/clips", response_model=list[VoiceClipOut])
-def list_project_clips(project_id: str):
-    if not project_service.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
+def list_project_clips(project_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     return list_for_project(project_id)
 
 
 @router.get("/{project_id}/clips/download-all")
-def download_project_clips_zip(project_id: str):
+def download_project_clips_zip(project_id: str, user_id: str = Depends(require_user_id)):
     from services.r2_storage import bucket_for_key, download_file as r2_dl, r2_configured as r2_on
-    if not project_service.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
-    from db.store import store
-    rows = store.list_voice_clips_for_project(project_id)
+    check_ownership(_store.project_owner_id(project_id), user_id)
+    rows = _store.list_voice_clips_for_project(project_id)
     if not rows:
         raise HTTPException(status_code=404, detail="No clips for this project yet")
     buf = io.BytesIO()
@@ -140,16 +138,14 @@ def download_project_clips_zip(project_id: str):
 
 
 @router.get("/{project_id}/replacements", response_model=list[ReplacementOut])
-def list_project_replacements(project_id: str):
-    if not project_service.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
+def list_project_replacements(project_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     return replacement_service.list_replacements_for_project(project_id)
 
 
 @router.get("/{project_id}/episodes", response_model=list[EpisodeOut])
-def list_episodes(project_id: str):
-    if not project_service.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
+def list_episodes(project_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     return episode_service.list_episodes(project_id)
 
 
@@ -157,9 +153,8 @@ _MAX_UPLOAD_BYTES = int(os.environ.get("CASTWEAVE_MAX_UPLOAD_MB", "500")) * 1024
 
 
 @router.post("/{project_id}/episodes/upload", response_model=EpisodeCreateResult)
-async def upload_episode(project_id: str, file: UploadFile = File(...)):
-    if not project_service.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
+async def upload_episode(project_id: str, file: UploadFile = File(...), user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
 
@@ -251,16 +246,14 @@ async def upload_episode(project_id: str, file: UploadFile = File(...)):
 
 
 @router.get("/{project_id}/characters", response_model=list[CharacterOut])
-def list_characters(project_id: str):
-    if not project_service.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
+def list_characters(project_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     return character_service.list_characters(project_id)
 
 
 @router.post("/{project_id}/characters", response_model=CharacterOut)
-def create_character_manual(project_id: str, body: CreateManualCharacterBody):
-    if not project_service.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
+def create_character_manual(project_id: str, body: CreateManualCharacterBody, user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     return character_service.create_manual_character(
         project_id,
         body.name,
@@ -270,9 +263,8 @@ def create_character_manual(project_id: str, body: CreateManualCharacterBody):
 
 
 @router.patch("/{project_id}/characters/{character_id}", response_model=CharacterOut)
-def patch_character(project_id: str, character_id: str, body: PatchCharacterBody):
-    if not project_service.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
+def patch_character(project_id: str, character_id: str, body: PatchCharacterBody, user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     updates = body.model_dump(exclude_none=True)
     if not updates:
         c = character_service.get_character(character_id)
@@ -287,10 +279,9 @@ def patch_character(project_id: str, character_id: str, body: PatchCharacterBody
 
 @router.post("/{project_id}/characters/{character_id}/avatar", response_model=CharacterOut)
 async def upload_character_avatar_under_project(
-    project_id: str, character_id: str, file: UploadFile = File(...)
+    project_id: str, character_id: str, file: UploadFile = File(...), user_id: str = Depends(require_user_id),
 ):
-    if not project_service.get_project(project_id):
-        raise HTTPException(status_code=404, detail="Project not found")
+    check_ownership(_store.project_owner_id(project_id), user_id)
     ch = character_service.get_character(character_id)
     if not ch or ch.project_id != project_id:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -298,8 +289,8 @@ async def upload_character_avatar_under_project(
 
 
 @router.post("/{project_id}/update", response_model=ProjectOut)
-def post_update_project(project_id: str, body: ProjectPatch):
-    """POST fallback when PATCH/PUT are blocked (some proxies or older stacks return 405)."""
+def post_update_project(project_id: str, body: ProjectPatch, user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     updated = project_service.update_project(project_id, body)
     if not updated:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -307,13 +298,13 @@ def post_update_project(project_id: str, body: ProjectPatch):
 
 
 @router.post("/{project_id}/delete", status_code=204)
-def post_delete_project(project_id: str):
-    """POST fallback when DELETE is blocked."""
-    return _delete_project_response(project_id)
+def post_delete_project(project_id: str, user_id: str = Depends(require_user_id)):
+    return _delete_project_response(project_id, user_id)
 
 
 @router.patch("/{project_id}", response_model=ProjectOut)
-def patch_project(project_id: str, body: ProjectPatch):
+def patch_project(project_id: str, body: ProjectPatch, user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     updated = project_service.update_project(project_id, body)
     if not updated:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -321,8 +312,8 @@ def patch_project(project_id: str, body: ProjectPatch):
 
 
 @router.put("/{project_id}", response_model=ProjectOut)
-def put_project(project_id: str, body: ProjectPatch):
-    """Same as PATCH. Some clients send PUT; this avoids 405 Method Not Allowed."""
+def put_project(project_id: str, body: ProjectPatch, user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     updated = project_service.update_project(project_id, body)
     if not updated:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -330,12 +321,13 @@ def put_project(project_id: str, body: ProjectPatch):
 
 
 @router.delete("/{project_id}", status_code=204)
-def remove_project(project_id: str):
-    return _delete_project_response(project_id)
+def remove_project(project_id: str, user_id: str = Depends(require_user_id)):
+    return _delete_project_response(project_id, user_id)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
-def get_project(project_id: str):
+def get_project(project_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(_store.project_owner_id(project_id), user_id)
     p = project_service.get_project(project_id)
     if not p:
         raise HTTPException(status_code=404, detail="Project not found")

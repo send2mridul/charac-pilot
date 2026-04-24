@@ -593,15 +593,14 @@ def _run_episode_media_pipeline(
         else:
             job_timing_add_phase(job_id, "analysis", dt_local)
 
-    # --- Clean up extracted WAV (transcript is persisted, WAV no longer needed) ---
-    if wav_path and wav_path.is_file():
-        _safe_unlink(wav_path)
-        _log_stage(job_id, "wav_cleaned")
-
-    # --- Upload to R2 and clean local ---
+    # --- Upload to R2 and clean local (WAV, source, thumbnails) ---
     if r2_configured():
         _log_stage(job_id, "r2_upload_start")
         try:
+            if wav_path and wav_path.is_file():
+                r2_upload_file(wav_path, bucket_for_key(audio_rel), audio_rel)
+                _log_stage(job_id, "r2_wav_uploaded", key=audio_rel)
+
             r2_upload_file(source_path, bucket_for_key(source_rel), source_rel)
             _log_stage(job_id, "r2_source_uploaded", key=source_rel)
 
@@ -612,6 +611,8 @@ def _run_episode_media_pipeline(
 
             _log_stage(job_id, "r2_thumbs_uploaded", count=len(thumb_rels))
 
+            if wav_path:
+                _safe_unlink(wav_path)
             _safe_unlink(source_path)
             for trel in thumb_rels:
                 _safe_unlink(STORAGE_ROOT / trel)
@@ -621,6 +622,10 @@ def _run_episode_media_pipeline(
             logger.warning(
                 "R2 upload failed job_id=%s (local files kept): %s", job_id, exc
             )
+    else:
+        if wav_path and wav_path.is_file():
+            _safe_unlink(wav_path)
+            _log_stage(job_id, "wav_cleaned")
 
     # --- Persist transcript and finalize ---
     try:

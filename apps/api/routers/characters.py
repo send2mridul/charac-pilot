@@ -4,10 +4,11 @@ import shutil
 import uuid
 import zipfile
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from auth import check_ownership, require_user_id
 from db.store import store
 from schemas.character import (
     AssignVoiceBody,
@@ -128,14 +129,14 @@ def _generate_and_store_clips(
 
 
 @router.get("/{character_id}/clips", response_model=list[VoiceClipOut])
-def list_character_clips(character_id: str):
-    if not character_service.get_character(character_id):
-        raise HTTPException(status_code=404, detail="Character not found")
+def list_character_clips(character_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     return list_for_character(character_id)
 
 
 @router.get("/{character_id}/clips/download-all")
-def download_character_clips_zip(character_id: str):
+def download_character_clips_zip(character_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     from services.r2_storage import bucket_for_key, download_file as r2_dl, r2_configured as r2_on
     c = character_service.get_character(character_id)
     if not c:
@@ -178,13 +179,14 @@ def download_character_clips_zip(character_id: str):
 
 
 @router.post("/{character_id}/avatar", response_model=CharacterOut)
-async def upload_character_avatar(character_id: str, file: UploadFile = File(...)):
+async def upload_character_avatar(character_id: str, file: UploadFile = File(...), user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     return await save_character_avatar_file(character_id, file)
 
 
 @router.post("/{character_id}/voice", response_model=CharacterOut)
-def assign_voice(character_id: str, body: AssignVoiceBody):
-    """Save a voice from the catalog (or custom ID) as the character's default voice."""
+def assign_voice(character_id: str, body: AssignVoiceBody, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     log.info("POST /characters/%s/voice voice_id=%s", character_id, body.voice_id)
     c = character_service.get_character(character_id)
     if not c:
@@ -215,7 +217,8 @@ def queue_generate(character_id: str, _body: GenerateBody | None = None):
 
 
 @router.post("/{character_id}/generate-preview", response_model=PreviewOut)
-def generate_preview_endpoint(character_id: str, body: GeneratePreviewBody):
+def generate_preview_endpoint(character_id: str, body: GeneratePreviewBody, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     log.info("POST /characters/%s/generate-preview text=%s", character_id, body.text[:80])
     c = character_service.get_character(character_id)
     if not c:
@@ -289,7 +292,8 @@ def generate_preview_endpoint(character_id: str, body: GeneratePreviewBody):
 
 
 @router.post("/{character_id}/generate-lines", response_model=GenerateLinesOut)
-def generate_lines_endpoint(character_id: str, body: GenerateLinesBody):
+def generate_lines_endpoint(character_id: str, body: GenerateLinesBody, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     c = character_service.get_character(character_id)
     if not c:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -311,7 +315,8 @@ def generate_lines_endpoint(character_id: str, body: GenerateLinesBody):
 
 
 @router.post("/{character_id}/generate-draft-lines", response_model=GenerateDraftLinesOut)
-def generate_draft_lines_endpoint(character_id: str, body: GenerateLinesBody):
+def generate_draft_lines_endpoint(character_id: str, body: GenerateLinesBody, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     c = character_service.get_character(character_id)
     if not c:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -339,7 +344,8 @@ def generate_draft_lines_endpoint(character_id: str, body: GenerateLinesBody):
 
 
 @router.post("/{character_id}/generate-clips", response_model=GenerateClipsOut)
-def generate_clips_endpoint(character_id: str, body: GenerateClipsBody):
+def generate_clips_endpoint(character_id: str, body: GenerateClipsBody, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     c = character_service.get_character(character_id)
     if not c:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -386,7 +392,8 @@ def generate_clips_endpoint(character_id: str, body: GenerateClipsBody):
 
 
 @router.post("/{character_id}/generate-clips-from-lines", response_model=GenerateClipsOut)
-def generate_clips_from_lines_endpoint(character_id: str, body: GenerateClipsFromLinesBody):
+def generate_clips_from_lines_endpoint(character_id: str, body: GenerateClipsFromLinesBody, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     c = character_service.get_character(character_id)
     if not c:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -421,8 +428,8 @@ def generate_clips_from_lines_endpoint(character_id: str, body: GenerateClipsFro
 
 
 @router.post("/{character_id}/avatar-from-episode-thumb", response_model=CharacterOut)
-def avatar_from_episode_thumbnail(character_id: str, body: AvatarFromEpisodeThumbBody):
-    """Copy a saved episode frame into this character's avatar image."""
+def avatar_from_episode_thumbnail(character_id: str, body: AvatarFromEpisodeThumbBody, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     from services import episode_service
 
     c = character_service.get_character(character_id)
@@ -480,8 +487,8 @@ class EnableSourceMatchedVoiceBody(BaseModel):
 
 
 @router.post("/{character_id}/enable-source-voice", response_model=CharacterOut)
-def enable_source_matched_voice_endpoint(character_id: str, body: EnableSourceMatchedVoiceBody):
-    """Enable source-matched voice for a character after rights confirmation."""
+def enable_source_matched_voice_endpoint(character_id: str, body: EnableSourceMatchedVoiceBody, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     log.info("POST /characters/%s/enable-source-voice rights_type=%s", character_id, body.rights_type)
     from services.source_voice_service import enable_source_matched_voice
     try:
@@ -501,7 +508,8 @@ def enable_source_matched_voice_endpoint(character_id: str, body: EnableSourceMa
 
 
 @router.post("/{character_id}/clear-voice", response_model=CharacterOut)
-def clear_attached_voice(character_id: str):
+def clear_attached_voice(character_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     updated = character_service.clear_character_voice(character_id)
     if not updated:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -515,7 +523,8 @@ def remove_character(character_id: str):
 
 
 @router.patch("/{character_id}", response_model=CharacterOut)
-def patch_character(character_id: str, body: PatchCharacterBody):
+def patch_character(character_id: str, body: PatchCharacterBody, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     log.info("PATCH /characters/%s body=%s", character_id, body.model_dump(exclude_none=True))
     updates = body.model_dump(exclude_none=True)
     if not updates:
@@ -530,7 +539,8 @@ def patch_character(character_id: str, body: PatchCharacterBody):
 
 
 @router.get("/{character_id}", response_model=CharacterOut)
-def get_character(character_id: str):
+def get_character(character_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(character_id), user_id)
     c = character_service.get_character(character_id)
     if not c:
         raise HTTPException(status_code=404, detail="Character not found")

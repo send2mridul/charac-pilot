@@ -143,6 +143,14 @@ async def lifespan(_app: FastAPI):
     )
     from db.store import store as _store
     _store.renormalize_hindi_display_text()
+
+    from services.r2_storage import r2_configured
+    if r2_configured():
+        log.info("R2 storage: ENABLED (uploads=%s, artifacts=%s)",
+                 _os.environ.get("R2_BUCKET_UPLOADS", "castweave-uploads"),
+                 _os.environ.get("R2_BUCKET_ARTIFACTS", "castweave-artifacts"))
+    else:
+        log.info("R2 storage: DISABLED (local disk mode)")
     yield
 
 
@@ -165,6 +173,25 @@ _frontend_url = _os.environ.get("FRONTEND_URL", "").strip().rstrip("/")
 if _frontend_url and _frontend_url not in _cors_origins:
     _cors_origins.append(_frontend_url)
 
+log.info("CORS allowed origins: %s", _cors_origins)
+
+
+@app.middleware("http")
+async def _log_http_requests(request: Request, call_next):
+    path = request.url.path
+    log.info("HTTP %s %s", request.method, path)
+    try:
+        response = await call_next(request)
+    except Exception:
+        log.exception("HTTP %s %s failed", request.method, path)
+        raise
+    log.info("HTTP %s %s -> %s", request.method, path, response.status_code)
+    return response
+
+
+# CORSMiddleware MUST be added after @app.middleware("http") so it is the
+# outermost layer.  Starlette middleware is LIFO: the last add_middleware
+# call wraps everything, including error responses.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -172,29 +199,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.middleware("http")
-async def _log_http_requests(request: Request, call_next):
-    """Log every request. Uses print(flush=True) so lines show under concurrently/npm on Windows even if uvicorn resets logging."""
-    path = request.url.path
-    print(f"[characpilot] HTTP {request.method} {path}", flush=True)
-    log.info("HTTP %s %s", request.method, path)
-    try:
-        response = await call_next(request)
-    except Exception:
-        print(
-            f"[characpilot] HTTP {request.method} {path} -> ERROR",
-            flush=True,
-        )
-        log.exception("HTTP %s %s failed", request.method, path)
-        raise
-    print(
-        f"[characpilot] HTTP {request.method} {path} -> {response.status_code}",
-        flush=True,
-    )
-    log.info("HTTP %s %s -> %s", request.method, path, response.status_code)
-    return response
 
 
 ensure_storage_dirs()

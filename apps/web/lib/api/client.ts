@@ -25,6 +25,23 @@ import type {
 
 export { ApiError } from "./errors";
 
+let _currentAuthToken: string | null = null;
+
+/** Called by SyncApiUser to inject the signed JWT for backend auth. */
+export function setApiAuthToken(token: string | null) {
+  _currentAuthToken = token;
+}
+
+/** Returns the current API auth token (used by media URL builders). */
+export function getApiAuthToken(): string | null {
+  return _currentAuthToken;
+}
+
+function _authHeaders(): Record<string, string> {
+  if (_currentAuthToken) return { Authorization: `Bearer ${_currentAuthToken}` };
+  return {};
+}
+
 async function requestJson<T>(
   path: string,
   init?: RequestInit,
@@ -34,6 +51,7 @@ async function requestJson<T>(
     ...init,
     headers: {
       Accept: "application/json",
+      ..._authHeaders(),
       ...(init?.headers ?? {}),
     },
     cache: "no-store",
@@ -70,7 +88,7 @@ export const api = {
     const base = getPublicApiBaseUrl();
     const url = `${base}/projects/${encodeURIComponent(id)}`;
     const init = {
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: { "Content-Type": "application/json", Accept: "application/json", ..._authHeaders() },
       body: JSON.stringify(body),
       cache: "no-store" as RequestCache,
     };
@@ -112,18 +130,17 @@ export const api = {
     const url = `${base}/projects/${encodeURIComponent(id)}`;
     const postDeleteInit = {
       method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      headers: { Accept: "application/json", "Content-Type": "application/json", ..._authHeaders() },
       body: "{}",
       cache: "no-store" as RequestCache,
     };
-    /** POST /projects/delete/{id} first: path does not overlap GET /projects/{id}, so no 405 from route-order bugs. */
     const attempts: (() => Promise<Response>)[] = [
       () => fetch(`${base}/projects/delete/${encodeURIComponent(id)}`, postDeleteInit),
       () => fetch(`${base}/projects/${encodeURIComponent(id)}/delete`, postDeleteInit),
       () =>
         fetch(url, {
           method: "DELETE",
-          headers: { Accept: "application/json" },
+          headers: { Accept: "application/json", ..._authHeaders() },
           cache: "no-store",
         }),
     ];
@@ -165,6 +182,9 @@ export const api = {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", url);
       xhr.responseType = "json";
+      if (_currentUserEmail) {
+        xhr.setRequestHeader("X-User-Email", _currentUserEmail);
+      }
 
       xhr.upload.onprogress = (ev) => {
         if (!onProgress || !ev.lengthComputable) return;
@@ -228,7 +248,7 @@ export const api = {
         method: "POST",
         body: fd,
         cache: "no-store",
-        headers: { Accept: "application/json" },
+        headers: { Accept: "application/json", ..._authHeaders() },
       });
     };
     return (async () => {
@@ -255,11 +275,17 @@ export const api = {
   episodeTranscriptExportUrl: (
     episodeId: string,
     format: "txt" | "srt" | "vtt",
-  ): string =>
-    `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/transcript/export.${format}`,
+  ): string => {
+    let url = `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/transcript/export.${format}`;
+    if (_currentAuthToken) url += `?token=${encodeURIComponent(_currentAuthToken)}`;
+    return url;
+  },
 
-  segmentSourceAudioUrl: (episodeId: string, segmentId: string): string =>
-    `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/segments/${encodeURIComponent(segmentId)}/audio`,
+  segmentSourceAudioUrl: (episodeId: string, segmentId: string): string => {
+    let url = `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/segments/${encodeURIComponent(segmentId)}/audio`;
+    if (_currentAuthToken) url += `?token=${encodeURIComponent(_currentAuthToken)}`;
+    return url;
+  },
 
   patchTranscriptSegmentText: (
     episodeId: string,
@@ -278,7 +304,7 @@ export const api = {
   deleteTranscriptSegment: async (episodeId: string, segmentId: string): Promise<void> => {
     const res = await fetch(
       `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}/segments/${encodeURIComponent(segmentId)}`,
-      { method: "DELETE", cache: "no-store" },
+      { method: "DELETE", cache: "no-store", headers: _authHeaders() },
     );
     if (res.ok || res.status === 204) return;
     const text = await res.text();
@@ -288,7 +314,7 @@ export const api = {
   deleteEpisode: async (episodeId: string) => {
     const res = await fetch(
       `${getPublicApiBaseUrl()}/episodes/${encodeURIComponent(episodeId)}`,
-      { method: "DELETE", cache: "no-store" },
+      { method: "DELETE", cache: "no-store", headers: _authHeaders() },
     );
     if (res.ok) return;
     const text = await res.text();
@@ -298,7 +324,7 @@ export const api = {
   deleteCharacter: async (characterId: string) => {
     const res = await fetch(
       `${getPublicApiBaseUrl()}/characters/${encodeURIComponent(characterId)}`,
-      { method: "DELETE", cache: "no-store" },
+      { method: "DELETE", cache: "no-store", headers: _authHeaders() },
     );
     if (res.ok) return;
     const text = await res.text();
@@ -520,7 +546,7 @@ export const api = {
     const url = `${getPublicApiBaseUrl()}/clips/${encodeURIComponent(clipId)}`;
     const res = await fetch(url, {
       method: "DELETE",
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ..._authHeaders() },
       cache: "no-store",
     });
     if (!res.ok) {
@@ -529,11 +555,17 @@ export const api = {
     }
   },
 
-  characterClipsZipUrl: (characterId: string) =>
-    `${getPublicApiBaseUrl()}/characters/${encodeURIComponent(characterId)}/clips/download-all`,
+  characterClipsZipUrl: (characterId: string): string => {
+    let url = `${getPublicApiBaseUrl()}/characters/${encodeURIComponent(characterId)}/clips/download-all`;
+    if (_currentAuthToken) url += `?token=${encodeURIComponent(_currentAuthToken)}`;
+    return url;
+  },
 
-  projectClipsZipUrl: (projectId: string) =>
-    `${getPublicApiBaseUrl()}/projects/${encodeURIComponent(projectId)}/clips/download-all`,
+  projectClipsZipUrl: (projectId: string): string => {
+    let url = `${getPublicApiBaseUrl()}/projects/${encodeURIComponent(projectId)}/clips/download-all`;
+    if (_currentAuthToken) url += `?token=${encodeURIComponent(_currentAuthToken)}`;
+    return url;
+  },
 
   listVoiceCatalog: (params?: { page?: number; page_size?: number }) => {
     const sp = new URLSearchParams();
@@ -666,7 +698,7 @@ export const api = {
     const url = `${getPublicApiBaseUrl()}/episodes/${episodeId}/replacements/${encodeURIComponent(replacementId)}`;
     const res = await fetch(url, {
       method: "DELETE",
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ..._authHeaders() },
       cache: "no-store",
     });
     if (!res.ok) {
@@ -698,7 +730,7 @@ export const api = {
     fd.append("name", name);
     fd.append("rights_type", rightsType);
     fd.append("rights_note", rightsNote);
-    const res = await fetch(url, { method: "POST", body: fd });
+    const res = await fetch(url, { method: "POST", body: fd, headers: _authHeaders() });
     const text = await res.text();
     if (!res.ok) throw new ApiError(`API ${res.status}`, res.status, text);
     return JSON.parse(text) as UserVoiceDto;
@@ -716,7 +748,7 @@ export const api = {
     fd.append("name", name);
     fd.append("rights_type", rightsType);
     fd.append("rights_note", rightsNote);
-    const res = await fetch(url, { method: "POST", body: fd });
+    const res = await fetch(url, { method: "POST", body: fd, headers: _authHeaders() });
     const text = await res.text();
     if (!res.ok) throw new ApiError(`API ${res.status}`, res.status, text);
     return JSON.parse(text) as UserVoiceDto;
@@ -724,7 +756,7 @@ export const api = {
 
   deleteUserVoice: async (voiceId: string): Promise<void> => {
     const url = `${getPublicApiBaseUrl()}/user-voices/${encodeURIComponent(voiceId)}`;
-    const res = await fetch(url, { method: "DELETE" });
+    const res = await fetch(url, { method: "DELETE", headers: _authHeaders() });
     if (!res.ok) {
       const text = await res.text();
       throw new ApiError(`API ${res.status}`, res.status, text);

@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 
+from auth import check_ownership, require_user_id
 from db.store import store
 from schemas.voice_clip import VoiceClipOut, VoiceClipPatch
 from services.voice_clip_service import clip_to_out
@@ -8,7 +9,8 @@ router = APIRouter()
 
 
 @router.patch("/{clip_id}", response_model=VoiceClipOut)
-def patch_clip(clip_id: str, body: VoiceClipPatch):
+def patch_clip(clip_id: str, body: VoiceClipPatch, user_id: str = Depends(require_user_id)):
+    check_ownership(store.clip_owner_id(clip_id), user_id)
     data = body.model_dump(exclude_unset=True)
     if not data:
         rec = store.get_voice_clip(clip_id)
@@ -23,7 +25,8 @@ def patch_clip(clip_id: str, body: VoiceClipPatch):
 
 
 @router.delete("/{clip_id}", status_code=204)
-def delete_clip(clip_id: str):
+def delete_clip(clip_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(store.clip_owner_id(clip_id), user_id)
     if not store.delete_voice_clip(clip_id):
         raise HTTPException(status_code=404, detail="Clip not found")
     return Response(status_code=204)

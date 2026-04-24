@@ -4,20 +4,21 @@ from db.store import ProjectRecord, store
 from schemas.project import ProjectCreate, ProjectOut, ProjectPatch
 
 
-def list_projects() -> list[ProjectOut]:
-    return [_to_out(p) for p in store.list_projects()]
+def list_projects(*, user_id: str | None = None) -> list[ProjectOut]:
+    return [_to_out(p) for p in store.list_projects(user_id=user_id)]
 
 
-def get_project(project_id: str) -> ProjectOut | None:
-    p = store.get_project(project_id)
+def get_project(project_id: str, *, user_id: str | None = None) -> ProjectOut | None:
+    p = store.get_project(project_id, user_id=user_id)
     return _to_out(p) if p else None
 
 
-def create_project(body: ProjectCreate) -> ProjectOut:
+def create_project(body: ProjectCreate, *, user_id: str | None = None) -> ProjectOut:
     rec = store.create_project(
         body.name.strip(),
         body.lead.strip() or "You",
         (body.description or "").strip(),
+        user_id=user_id,
     )
     return _to_out(rec)
 

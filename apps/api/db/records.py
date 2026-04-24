@@ -20,6 +20,7 @@ class ProjectRecord:
     lead: str
     updated_at: str
     description: str = ""
+    user_id: str | None = None
 
 
 @dataclass
@@ -98,6 +99,7 @@ class UserVoiceRecord:
     rights_note: str = ""
     preview_audio_path: str | None = None
     created_at: str = field(default_factory=_now_iso)
+    user_id: str | None = None
 
 
 @dataclass

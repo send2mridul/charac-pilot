@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from auth import check_ownership, require_user_id
+from db.store import store
 
 from schemas.voice_catalog import VoiceCatalogItem, VoiceCatalogResponse
 from schemas.voice_design import (
@@ -36,25 +39,32 @@ def _safe_voice_error_message(msg: str) -> str:
 
 
 @router.post("/design", response_model=DesignVoiceResponse)
-def post_voice_design(body: DesignVoiceBody):
+def post_voice_design(body: DesignVoiceBody, user_id: str = Depends(require_user_id)):
     """Generate preview candidates from a text description (ElevenLabs Voice Design)."""
-    return voice_design_service.design_voice(body)
+    return voice_design_service.design_voice(body, user_id=user_id)
 
 
 @router.post("/design/save", response_model=SaveCustomVoiceResult)
-def post_save_designed_voice(body: SaveCustomVoiceBody):
-    """Create a permanent voice from a design preview and assign it to a character."""
+def post_save_designed_voice(body: SaveCustomVoiceBody, user_id: str = Depends(require_user_id)):
+    check_ownership(store.character_owner_id(body.character_id), user_id)
     payload = body.model_copy(update={"source_type": "designed", "parent_voice_id": None})
     try:
         return voice_design_service.save_custom_voice(payload)
     except ValueError as e:
-        log.warning("voice design/save failed: %s", e)
+        log.warning("voice design/save validation error: %s", e)
         raise HTTPException(status_code=400, detail=_safe_voice_error_message(str(e))) from e
+    except Exception as e:
+        log.exception("voice design/save unexpected error: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail="Voice service is temporarily unavailable. Please try again.",
+        ) from e
 
 
 @router.post("/remix/save", response_model=SaveCustomVoiceResult)
-def post_save_remixed_voice(body: SaveCustomVoiceBody):
+def post_save_remixed_voice(body: SaveCustomVoiceBody, user_id: str = Depends(require_user_id)):
     """Create a voice from a remix preview and assign it to a character."""
+    check_ownership(store.character_owner_id(body.character_id), user_id)
     if not (body.parent_voice_id or "").strip():
         raise HTTPException(
             status_code=400,
@@ -64,14 +74,20 @@ def post_save_remixed_voice(body: SaveCustomVoiceBody):
     try:
         return voice_design_service.save_custom_voice(payload)
     except ValueError as e:
-        log.warning("voice remix/save failed: %s", e)
+        log.warning("voice remix/save validation error: %s", e)
         raise HTTPException(status_code=400, detail=_safe_voice_error_message(str(e))) from e
+    except Exception as e:
+        log.exception("voice remix/save unexpected error: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail="Voice service is temporarily unavailable. Please try again.",
+        ) from e
 
 
 @router.post("/{voice_id}/remix", response_model=RemixVoiceResponse)
-def post_voice_remix(voice_id: str, body: RemixVoiceBody):
+def post_voice_remix(voice_id: str, body: RemixVoiceBody, user_id: str = Depends(require_user_id)):
     """Generate remix preview candidates for an existing ElevenLabs voice id."""
-    return voice_design_service.remix_voice(voice_id, body)
+    return voice_design_service.remix_voice(voice_id, body, user_id=user_id)
 
 
 @router.get("/catalog", response_model=VoiceCatalogResponse)

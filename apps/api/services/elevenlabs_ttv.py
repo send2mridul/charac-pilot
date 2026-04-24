@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -119,13 +120,19 @@ def create_voice_from_generated(
     return _post_json(CREATE_VOICE_URL, payload, timeout=90)
 
 
+def _user_hash(user_id: str) -> str:
+    return hashlib.sha256(user_id.encode()).hexdigest()[:16]
+
+
 def write_preview_files(
     previews: list[dict[str, Any]],
     subdir: str,
+    *,
+    user_id: str,
 ) -> list[dict[str, Any]]:
     """Decode base64 previews to storage; return candidate dicts with URLs."""
     batch = uuid.uuid4().hex[:12]
-    base = STORAGE_ROOT / "voice_design" / subdir / batch
+    base = STORAGE_ROOT / "voice_design" / _user_hash(user_id) / subdir / batch
     base.mkdir(parents=True, exist_ok=True)
     out: list[dict[str, Any]] = []
     for i, p in enumerate(previews[:6]):

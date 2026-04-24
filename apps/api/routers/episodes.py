@@ -3,10 +3,11 @@ import os
 import subprocess
 import tempfile
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from starlette.background import BackgroundTask
 
+from auth import check_ownership, require_user_id
 from db.store import store
 from schemas.character import CharacterOut, CreateCharacterFromGroupBody
 from schemas.episode import EpisodeExportBody
@@ -84,8 +85,9 @@ def _load_segments_for_export(episode_id: str):
 
 
 @router.get("/{episode_id}/transcript", response_model=TranscriptOut)
-def get_episode_transcript(episode_id: str):
+def get_episode_transcript(episode_id: str, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     log.info("GET /episodes/%s/transcript", eid)
     episode_service.ensure_uploaded_episode_in_memory(eid)
     if not episode_service.get_episode(eid):
@@ -106,7 +108,8 @@ def get_episode_transcript(episode_id: str):
 
 
 @router.get("/{episode_id}/transcript/export.txt", response_class=PlainTextResponse)
-def export_episode_transcript_txt(episode_id: str):
+def export_episode_transcript_txt(episode_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(store.episode_owner_id(_episode_id(episode_id)), user_id)
     rows = _load_segments_for_export(episode_id)
     lines: list[str] = []
     for seg in rows:
@@ -117,7 +120,8 @@ def export_episode_transcript_txt(episode_id: str):
 
 
 @router.get("/{episode_id}/transcript/export.srt", response_class=PlainTextResponse)
-def export_episode_transcript_srt(episode_id: str):
+def export_episode_transcript_srt(episode_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(store.episode_owner_id(_episode_id(episode_id)), user_id)
     rows = _load_segments_for_export(episode_id)
     blocks: list[str] = []
     for i, seg in enumerate(rows, start=1):
@@ -131,7 +135,8 @@ def export_episode_transcript_srt(episode_id: str):
 
 
 @router.get("/{episode_id}/transcript/export.vtt", response_class=PlainTextResponse)
-def export_episode_transcript_vtt(episode_id: str):
+def export_episode_transcript_vtt(episode_id: str, user_id: str = Depends(require_user_id)):
+    check_ownership(store.episode_owner_id(_episode_id(episode_id)), user_id)
     rows = _load_segments_for_export(episode_id)
     lines_vtt = ["WEBVTT", ""]
     for seg in rows:
@@ -145,8 +150,9 @@ def export_episode_transcript_vtt(episode_id: str):
 
 
 @router.delete("/{episode_id}", status_code=204)
-def delete_episode(episode_id: str):
+def delete_episode(episode_id: str, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     log.info("DELETE /episodes/%s", eid)
     episode_service.ensure_uploaded_episode_in_memory(eid)
     ep = episode_service.get_episode(eid)
@@ -158,8 +164,9 @@ def delete_episode(episode_id: str):
 
 
 @router.get("/{episode_id}/segments", response_model=list[TranscriptSegmentOut])
-def list_episode_transcript_segments(episode_id: str):
+def list_episode_transcript_segments(episode_id: str, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     log.info("GET /episodes/%s/segments", eid)
     episode_service.ensure_uploaded_episode_in_memory(eid)
     if not episode_service.get_episode(eid):
@@ -176,9 +183,10 @@ def list_episode_transcript_segments(episode_id: str):
 
 
 @router.patch("/{episode_id}/segments/{segment_id}", response_model=TranscriptSegmentOut)
-def patch_transcript_segment(episode_id: str, segment_id: str, body: PatchTranscriptSegmentBody):
+def patch_transcript_segment(episode_id: str, segment_id: str, body: PatchTranscriptSegmentBody, user_id: str = Depends(require_user_id)):
     """Update transcript display text only (persists to DB and transcript.json; no audio generation)."""
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     sid = segment_id.strip()
     log.info("PATCH /episodes/%s/segments/%s", eid, sid)
     episode_service.ensure_uploaded_episode_in_memory(eid)
@@ -191,9 +199,9 @@ def patch_transcript_segment(episode_id: str, segment_id: str, body: PatchTransc
 
 
 @router.delete("/{episode_id}/segments/{segment_id}", status_code=204)
-def delete_transcript_segment(episode_id: str, segment_id: str):
-    """Soft-delete a transcript segment (hides from exports and UI)."""
+def delete_transcript_segment(episode_id: str, segment_id: str, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     sid = segment_id.strip()
     log.info("DELETE /episodes/%s/segments/%s", eid, sid)
     ok = store.soft_delete_segment(eid, sid)
@@ -202,10 +210,10 @@ def delete_transcript_segment(episode_id: str, segment_id: str):
 
 
 @router.get("/{episode_id}/segments/{segment_id}/audio")
-def get_segment_source_audio(episode_id: str, segment_id: str):
-    """Extract and serve a short WAV clip of the source audio for one transcript segment."""
+def get_segment_source_audio(episode_id: str, segment_id: str, user_id: str = Depends(require_user_id)):
     from storage_paths import STORAGE_ROOT
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     sid = segment_id.strip()
     episode_service.ensure_uploaded_episode_in_memory(eid)
     ep = episode_service.get_episode(eid)
@@ -276,8 +284,9 @@ def get_segment_source_audio(episode_id: str, segment_id: str):
 
 
 @router.get("/{episode_id}/speaker-groups", response_model=list[SpeakerGroupOut])
-def list_speaker_groups(episode_id: str):
+def list_speaker_groups(episode_id: str, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     log.info("GET /episodes/%s/speaker-groups", eid)
     episode_service.ensure_uploaded_episode_in_memory(eid)
     if not episode_service.get_episode(eid):
@@ -299,8 +308,9 @@ def list_speaker_groups(episode_id: str):
 
 
 @router.patch("/{episode_id}/speaker-groups/{speaker_label}", response_model=SpeakerGroupOut)
-def rename_speaker_group(episode_id: str, speaker_label: str, body: SpeakerGroupRenameBody):
+def rename_speaker_group(episode_id: str, speaker_label: str, body: SpeakerGroupRenameBody, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     log.info("PATCH /episodes/%s/speaker-groups/%s body=%s", eid, speaker_label, body.model_dump())
     episode_service.ensure_uploaded_episode_in_memory(eid)
     if not episode_service.get_episode(eid):
@@ -324,8 +334,9 @@ def rename_speaker_group(episode_id: str, speaker_label: str, body: SpeakerGroup
 
 
 @router.post("/{episode_id}/speaker-groups/merge", response_model=list[SpeakerGroupOut])
-def merge_speaker_groups(episode_id: str, body: SpeakerGroupMergeBody):
+def merge_speaker_groups(episode_id: str, body: SpeakerGroupMergeBody, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     log.info(
         "POST /episodes/%s/speaker-groups/merge from=%s into=%s",
         eid,
@@ -360,8 +371,9 @@ def merge_speaker_groups(episode_id: str, body: SpeakerGroupMergeBody):
 
 
 @router.post("/{episode_id}/speaker-groups/{speaker_label}/create-character", response_model=CharacterOut)
-def create_character_from_group(episode_id: str, speaker_label: str, body: CreateCharacterFromGroupBody):
+def create_character_from_group(episode_id: str, speaker_label: str, body: CreateCharacterFromGroupBody, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     log.info("POST /episodes/%s/speaker-groups/%s/create-character name=%s", eid, speaker_label, body.name)
     episode_service.ensure_uploaded_episode_in_memory(eid)
     ep = episode_service.get_episode(eid)
@@ -377,8 +389,9 @@ def create_character_from_group(episode_id: str, speaker_label: str, body: Creat
 
 
 @router.get("/{episode_id}/replacements", response_model=list[ReplacementOut])
-def list_episode_replacements(episode_id: str):
+def list_episode_replacements(episode_id: str, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     log.info("GET /episodes/%s/replacements", eid)
     episode_service.ensure_uploaded_episode_in_memory(eid)
     try:
@@ -389,8 +402,9 @@ def list_episode_replacements(episode_id: str):
 
 
 @router.post("/{episode_id}/segments/{segment_id}/replace", response_model=ReplacementOut)
-def replace_segment(episode_id: str, segment_id: str, body: ReplaceSegmentBody):
+def replace_segment(episode_id: str, segment_id: str, body: ReplaceSegmentBody, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     sid = segment_id.strip()
     log.info(
         "POST /episodes/%s/segments/%s/replace character_id=%s",
@@ -416,8 +430,10 @@ def patch_episode_replacement(
     episode_id: str,
     replacement_id: str,
     body: PatchReplacementBody,
+    user_id: str = Depends(require_user_id),
 ):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     rid = replacement_id.strip()
     log.info("PATCH /episodes/%s/replacements/%s", eid, rid)
     episode_service.ensure_uploaded_episode_in_memory(eid)
@@ -428,8 +444,9 @@ def patch_episode_replacement(
 
 
 @router.delete("/{episode_id}/replacements/{replacement_id}", status_code=204)
-def delete_episode_replacement(episode_id: str, replacement_id: str):
+def delete_episode_replacement(episode_id: str, replacement_id: str, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     rid = replacement_id.strip()
     log.info("DELETE /episodes/%s/replacements/%s", eid, rid)
     episode_service.ensure_uploaded_episode_in_memory(eid)
@@ -443,9 +460,9 @@ def delete_episode_replacement(episode_id: str, replacement_id: str):
     "/{episode_id}/segments/{segment_id}/generate-takes",
     response_model=list[ReplacementOut],
 )
-def generate_takes(episode_id: str, segment_id: str, body: GenerateTakesBody):
-    """Generate N takes for a segment with a delivery preset."""
+def generate_takes(episode_id: str, segment_id: str, body: GenerateTakesBody, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     sid = segment_id.strip()
     log.info(
         "POST /episodes/%s/segments/%s/generate-takes preset=%s count=%d",
@@ -471,9 +488,9 @@ def generate_takes(episode_id: str, segment_id: str, body: GenerateTakesBody):
 
 
 @router.post("/{episode_id}/replacements/{replacement_id}/set-active", response_model=ReplacementOut)
-def set_active_take(episode_id: str, replacement_id: str):
-    """Set a take as the active one for its segment+character."""
+def set_active_take(episode_id: str, replacement_id: str, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     rid = replacement_id.strip()
     log.info("POST /episodes/%s/replacements/%s/set-active", eid, rid)
     rec = store.set_active_take(eid, rid)
@@ -484,8 +501,9 @@ def set_active_take(episode_id: str, replacement_id: str):
 
 
 @router.post("/{episode_id}/export", response_model=JobOut)
-def export_episode(episode_id: str, _body: EpisodeExportBody | None = None):
+def export_episode(episode_id: str, _body: EpisodeExportBody | None = None, user_id: str = Depends(require_user_id)):
     eid = _episode_id(episode_id)
+    check_ownership(store.episode_owner_id(eid), user_id)
     episode_service.ensure_uploaded_episode_in_memory(eid)
     if not episode_service.get_episode(eid):
         raise HTTPException(status_code=404, detail="Episode not found")

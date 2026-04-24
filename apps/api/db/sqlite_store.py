@@ -338,6 +338,29 @@ class SqliteStore:
             except sqlite3.OperationalError:
                 pass
 
+        # --- user_id columns for ownership isolation ---
+        cur = self._cx.execute("PRAGMA table_info(projects)")
+        pcols = {row[1] for row in cur.fetchall()}
+        if "user_id" not in pcols:
+            try:
+                self._cx.execute("ALTER TABLE projects ADD COLUMN user_id TEXT")
+                self._cx.execute("CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id)")
+                self._cx.commit()
+                log.info("migration: added user_id column to projects")
+            except sqlite3.OperationalError:
+                pass
+
+        cur = self._cx.execute("PRAGMA table_info(user_voices)")
+        uvcols = {row[1] for row in cur.fetchall()}
+        if "user_id" not in uvcols:
+            try:
+                self._cx.execute("ALTER TABLE user_voices ADD COLUMN user_id TEXT")
+                self._cx.execute("CREATE INDEX IF NOT EXISTS idx_user_voices_user ON user_voices(user_id)")
+                self._cx.commit()
+                log.info("migration: added user_id column to user_voices")
+            except sqlite3.OperationalError:
+                pass
+
     def renormalize_hindi_display_text(self) -> None:
         """Re-derive display text for Hindi segments that have text_original.
 
@@ -477,6 +500,11 @@ class SqliteStore:
             desc = str(r["description"] or "")
         except (KeyError, IndexError):
             pass
+        uid = None
+        try:
+            uid = r["user_id"]
+        except (KeyError, IndexError):
+            pass
         return ProjectRecord(
             id=r["id"],
             name=r["name"],
@@ -485,6 +513,7 @@ class SqliteStore:
             lead=r["lead"],
             updated_at=r["updated_at"],
             description=desc,
+            user_id=uid,
         )
 
     def _row_episode(self, r: sqlite3.Row) -> EpisodeRecord:
@@ -618,21 +647,33 @@ class SqliteStore:
             updated_at=r["updated_at"],
         )
 
-    def list_projects(self) -> list[ProjectRecord]:
+    def list_projects(self, *, user_id: str | None = None) -> list[ProjectRecord]:
         with self._lock:
-            cur = self._cx.execute(
-                "SELECT * FROM projects ORDER BY updated_at DESC",
-            )
+            if user_id:
+                cur = self._cx.execute(
+                    "SELECT * FROM projects WHERE user_id = ? ORDER BY updated_at DESC",
+                    (user_id,),
+                )
+            else:
+                cur = self._cx.execute(
+                    "SELECT * FROM projects ORDER BY updated_at DESC",
+                )
             rows = cur.fetchall()
         return [self._row_project(r) for r in rows]
 
-    def get_project(self, project_id: str) -> ProjectRecord | None:
+    def get_project(self, project_id: str, *, user_id: str | None = None) -> ProjectRecord | None:
         with self._lock:
-            cur = self._cx.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+            if user_id:
+                cur = self._cx.execute(
+                    "SELECT * FROM projects WHERE id = ? AND user_id = ?",
+                    (project_id, user_id),
+                )
+            else:
+                cur = self._cx.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
             r = cur.fetchone()
         return self._row_project(r) if r else None
 
-    def create_project(self, name: str, lead: str, description: str = "") -> ProjectRecord:
+    def create_project(self, name: str, lead: str, description: str = "", *, user_id: str | None = None) -> ProjectRecord:
         pid = f"p-{uuid.uuid4().hex[:8]}"
         ts = _now_iso()
         rec = ProjectRecord(
@@ -643,11 +684,12 @@ class SqliteStore:
             lead=lead,
             updated_at=ts,
             description=description.strip(),
+            user_id=user_id,
         )
         with self._lock:
             self._cx.execute(
-                """INSERT INTO projects (id, name, status, scene_count, lead, updated_at, description)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO projects (id, name, status, scene_count, lead, updated_at, description, user_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     rec.id,
                     rec.name,
@@ -656,6 +698,7 @@ class SqliteStore:
                     rec.lead,
                     rec.updated_at,
                     rec.description,
+                    rec.user_id,
                 ),
             )
             self._cx.commit()
@@ -1877,6 +1920,7 @@ class SqliteStore:
         rights_type: str,
         rights_note: str = "",
         preview_audio_path: str | None = None,
+        user_id: str | None = None,
     ) -> UserVoiceRecord:
         ts = _now_iso()
         rec = UserVoiceRecord(
@@ -1889,27 +1933,34 @@ class SqliteStore:
             rights_note=rights_note,
             preview_audio_path=preview_audio_path,
             created_at=ts,
+            user_id=user_id,
         )
         with self._lock:
             self._cx.execute(
                 """INSERT INTO user_voices
                   (id, name, elevenlabs_voice_id, source_type, sample_audio_path,
-                   rights_type, rights_note, preview_audio_path, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?)""",
+                   rights_type, rights_note, preview_audio_path, created_at, user_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (
                     rec.id, rec.name, rec.elevenlabs_voice_id, rec.source_type,
                     rec.sample_audio_path, rec.rights_type, rec.rights_note,
-                    rec.preview_audio_path, rec.created_at,
+                    rec.preview_audio_path, rec.created_at, rec.user_id,
                 ),
             )
             self._cx.commit()
         return rec
 
-    def list_user_voices(self) -> list[UserVoiceRecord]:
+    def list_user_voices(self, *, user_id: str | None = None) -> list[UserVoiceRecord]:
         with self._lock:
-            cur = self._cx.execute(
-                "SELECT * FROM user_voices ORDER BY created_at DESC",
-            )
+            if user_id:
+                cur = self._cx.execute(
+                    "SELECT * FROM user_voices WHERE user_id = ? ORDER BY created_at DESC",
+                    (user_id,),
+                )
+            else:
+                cur = self._cx.execute(
+                    "SELECT * FROM user_voices ORDER BY created_at DESC",
+                )
             rows = cur.fetchall()
         return [self._row_user_voice(r) for r in rows]
 
@@ -1931,6 +1982,11 @@ class SqliteStore:
         return rec
 
     def _row_user_voice(self, r: sqlite3.Row) -> UserVoiceRecord:
+        uid = None
+        try:
+            uid = r["user_id"]
+        except (KeyError, IndexError):
+            pass
         return UserVoiceRecord(
             id=r["id"],
             name=r["name"],
@@ -1941,7 +1997,61 @@ class SqliteStore:
             rights_note=r["rights_note"] or "",
             preview_audio_path=r["preview_audio_path"],
             created_at=r["created_at"],
+            user_id=uid,
         )
+
+    # ── ownership verification ─────────────────────────────────────────
+
+    def project_owner_id(self, project_id: str) -> str | None:
+        with self._lock:
+            cur = self._cx.execute("SELECT user_id FROM projects WHERE id = ?", (project_id,))
+            r = cur.fetchone()
+        return (r["user_id"] if r else None)
+
+    def episode_owner_id(self, episode_id: str) -> str | None:
+        with self._lock:
+            cur = self._cx.execute(
+                "SELECT p.user_id FROM episodes e JOIN projects p ON p.id = e.project_id WHERE e.id = ?",
+                (episode_id,),
+            )
+            r = cur.fetchone()
+        return (r["user_id"] if r else None)
+
+    def character_owner_id(self, character_id: str) -> str | None:
+        with self._lock:
+            cur = self._cx.execute(
+                "SELECT p.user_id FROM characters c JOIN projects p ON p.id = c.project_id WHERE c.id = ?",
+                (character_id,),
+            )
+            r = cur.fetchone()
+        return (r["user_id"] if r else None)
+
+    def clip_owner_id(self, clip_id: str) -> str | None:
+        with self._lock:
+            cur = self._cx.execute(
+                "SELECT p.user_id FROM voice_clips vc JOIN projects p ON p.id = vc.project_id WHERE vc.id = ?",
+                (clip_id,),
+            )
+            r = cur.fetchone()
+        return (r["user_id"] if r else None)
+
+    def user_voice_owner_id(self, voice_id: str) -> str | None:
+        with self._lock:
+            cur = self._cx.execute("SELECT user_id FROM user_voices WHERE id = ?", (voice_id,))
+            r = cur.fetchone()
+        return (r["user_id"] if r else None)
+
+    def job_owner_id(self, job_id: str) -> str | None:
+        with self._lock:
+            cur = self._cx.execute(
+                """SELECT p.user_id FROM jobs j
+                   JOIN episodes e ON e.id = j.episode_id
+                   JOIN projects p ON p.id = e.project_id
+                   WHERE j.id = ?""",
+                (job_id,),
+            )
+            r = cur.fetchone()
+        return (r["user_id"] if r else None)
 
     # ── multi-take helpers ────────────────────────────────────────────
 

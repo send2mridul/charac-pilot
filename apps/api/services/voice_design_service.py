@@ -68,7 +68,7 @@ def _safe_generation_error_message(action: str = "request") -> str:
     return "Voice design is unavailable right now. Please try again."
 
 
-def design_voice(body: DesignVoiceBody) -> DesignVoiceResponse:
+def design_voice(body: DesignVoiceBody, *, user_id: str) -> DesignVoiceResponse:
     if not os.environ.get("ELEVENLABS_API_KEY"):
         return DesignVoiceResponse(
             source="fallback",
@@ -135,7 +135,7 @@ def design_voice(body: DesignVoiceBody) -> DesignVoiceResponse:
             )
 
     try:
-        files = write_preview_files(raw, "design")
+        files = write_preview_files(raw, "design", user_id=user_id)
         cands = [
             VoicePreviewCandidateOut(
                 generated_voice_id=x["generated_voice_id"],
@@ -166,7 +166,7 @@ def design_voice(body: DesignVoiceBody) -> DesignVoiceResponse:
         )
 
 
-def remix_voice(voice_id: str, body: RemixVoiceBody) -> RemixVoiceResponse:
+def remix_voice(voice_id: str, body: RemixVoiceBody, *, user_id: str) -> RemixVoiceResponse:
     if not os.environ.get("ELEVENLABS_API_KEY"):
         return RemixVoiceResponse(
             source="fallback",
@@ -180,7 +180,7 @@ def remix_voice(voice_id: str, body: RemixVoiceBody) -> RemixVoiceResponse:
             body.remix_prompt,
             body.preview_text,
         )
-        files = write_preview_files(raw, "remix")
+        files = write_preview_files(raw, "remix", user_id=user_id)
         cands = [
             VoicePreviewCandidateOut(
                 generated_voice_id=x["generated_voice_id"],
