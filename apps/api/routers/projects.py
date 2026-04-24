@@ -53,9 +53,18 @@ def create_project(body: ProjectCreate):
 
 
 def _delete_project_response(project_id: str) -> Response:
+    import shutil
+
     if not project_service.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     project_service.delete_project(project_id)
+    project_upload_dir = UPLOADS_ROOT / project_id
+    if project_upload_dir.is_dir():
+        try:
+            shutil.rmtree(project_upload_dir)
+            logger.info("cleaned up project upload dir: %s", project_upload_dir)
+        except OSError as e:
+            logger.warning("could not clean project upload dir %s: %s", project_upload_dir, e)
     return Response(status_code=204)
 
 

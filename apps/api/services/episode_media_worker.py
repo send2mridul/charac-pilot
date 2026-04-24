@@ -1,9 +1,18 @@
-"""Background episode ingest: FFmpeg audio extract + thumbnails (local dev)."""
+"""Background episode ingest: FFmpeg audio extract + thumbnails + ASR.
+
+Pipeline produces 16 kHz mono PCM WAV for ASR and diarization.
+All media stays on disk (file paths stored in SQLite, never blobs).
+Intermediate WAV is cleaned up after transcript extraction on success.
+"""
 
 from __future__ import annotations
 
 import logging
 import os
+try:
+    import resource as _resource
+except ImportError:
+    _resource = None  # type: ignore[assignment]
 import subprocess
 import threading
 import time
@@ -13,7 +22,12 @@ from db.store import store
 from services import azure_vi_config
 from services.azure_vi_diag import azure_vi_line
 from services.azure_vi_errors import brief_exception_for_fallback
-from services.import_policy import episode_media_max_wall_sec, local_first_max_duration_sec
+from services.import_policy import (
+    episode_media_max_wall_sec,
+    local_first_max_duration_sec,
+    max_concurrent_jobs,
+    max_media_duration_sec,
+)
 from services.import_timing import ImportStageTimer
 from services.job_timing import (
     job_timing_add_phase,
@@ -34,9 +48,53 @@ logger = logging.getLogger(__name__)
 
 _THUMB_COUNT = 6
 
+_job_semaphore: threading.Semaphore | None = None
+_semaphore_lock = threading.Lock()
+
+
+def _get_semaphore() -> threading.Semaphore:
+    global _job_semaphore
+    if _job_semaphore is None:
+        with _semaphore_lock:
+            if _job_semaphore is None:
+                _job_semaphore = threading.Semaphore(max_concurrent_jobs())
+                logger.info(
+                    "episode_media concurrency limit=%d",
+                    max_concurrent_jobs(),
+                )
+    return _job_semaphore
+
+
+def _rss_mb() -> float:
+    """Current process RSS in MB (Linux/macOS). Returns 0 on Windows."""
+    if _resource is None:
+        return 0.0
+    try:
+        ru = _resource.getrusage(_resource.RUSAGE_SELF)
+        return ru.ru_maxrss / 1024.0
+    except Exception:
+        return 0.0
+
+
+def _file_size_mb(p: Path) -> float:
+    try:
+        return p.stat().st_size / (1024 * 1024)
+    except OSError:
+        return 0.0
+
+
+def _log_stage(job_id: str, stage: str, **extra: object) -> None:
+    parts = " ".join(f"{k}={v}" for k, v in extra.items())
+    logger.info(
+        "castweave_stage job_id=%s stage=%s rss_mb=%.1f %s",
+        job_id,
+        stage,
+        _rss_mb(),
+        parts,
+    )
+
 
 def _asr_diag_enabled() -> bool:
-    """Verbose ASR/transcript pipeline logging (set CASTWEAVE_ASR_DIAG=1)."""
     return (os.environ.get("CASTWEAVE_ASR_DIAG") or "").strip().lower() in (
         "1",
         "true",
@@ -45,7 +103,6 @@ def _asr_diag_enabled() -> bool:
 
 
 def _fail_episode_job(job_id: str, episode_id: str, message: str) -> None:
-    """Always persist a terminal failed state when the pipeline cannot complete."""
     msg = (message or "Processing failed").strip()[:500]
     updated = store.update_job(
         job_id,
@@ -64,13 +121,32 @@ def _fail_episode_job(job_id: str, episode_id: str, message: str) -> None:
     store.update_episode(episode_id, status="failed")
 
 
+def _safe_unlink(p: Path) -> None:
+    try:
+        if p.is_file():
+            p.unlink()
+            logger.debug("cleaned up temp file: %s", p)
+    except OSError:
+        pass
+
+
 def schedule_episode_processing(
     job_id: str,
     episode_id: str,
     project_id: str,
     source_path: Path,
 ) -> None:
+    sem = _get_semaphore()
+
     def _run() -> None:
+        acquired = sem.acquire(timeout=5)
+        if not acquired:
+            _fail_episode_job(
+                job_id,
+                episode_id,
+                "Server is busy processing another import. Please wait and try again.",
+            )
+            return
         try:
             _run_episode_media_pipeline(job_id, episode_id, project_id, source_path)
         except Exception as exc:
@@ -80,6 +156,8 @@ def schedule_episode_processing(
                 episode_id,
             )
             _fail_episode_job(job_id, episode_id, str(exc))
+        finally:
+            sem.release()
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -114,6 +192,7 @@ def _ffmpeg_extract_wav(
     ffmpeg_exe: str,
     ffprobe_exe: str,
 ) -> None:
+    """Extract audio from video to 16 kHz mono PCM WAV (minimal size for ASR)."""
     r = subprocess.run(
         [
             ffmpeg_exe,
@@ -140,7 +219,6 @@ def _ffmpeg_extract_wav(
         return
 
     err = (r.stderr or r.stdout or "").strip() or "ffmpeg failed"
-    # Video-only sources have no audio stream — generate silent WAV for the clip duration.
     low = err.lower()
     if (
         "does not contain any stream" in low
@@ -159,7 +237,7 @@ def _ffmpeg_extract_wav(
                 "-f",
                 "lavfi",
                 "-i",
-                f"anullsrc=r=16000:cl=mono",
+                "anullsrc=r=16000:cl=mono",
                 "-t",
                 str(max(0.1, duration)),
                 "-acodec",
@@ -188,7 +266,7 @@ def _ffmpeg_normalize_audio(
     wav_out: Path,
     ffmpeg_exe: str,
 ) -> None:
-    """Normalize an audio file (mp3, m4a, etc.) to 44.1kHz stereo PCM WAV."""
+    """Normalize an audio file (mp3, m4a, etc.) to 16 kHz mono PCM WAV."""
     r = subprocess.run(
         [
             ffmpeg_exe,
@@ -255,6 +333,7 @@ def _run_episode_media_pipeline(
 ) -> None:
     timer = ImportStageTimer(job_id)
     wall_deadline = time.monotonic() + episode_media_max_wall_sec()
+    wav_path: Path | None = None
 
     def _enforce_deadline(where: str) -> None:
         if time.monotonic() > wall_deadline:
@@ -263,21 +342,10 @@ def _run_episode_media_pipeline(
                 "Try a shorter clip, or check API logs and CASTWEAVE_EPISODE_MEDIA_MAX_SEC."
             )
 
+    _log_stage(job_id, "pipeline_start", source_mb=_file_size_mb(source_path))
     timer.mark("pipeline_worker_start")
-    logger.info(
-        "episode_media pipeline start job_id=%s episode_id=%s project_id=%s path=%s",
-        job_id,
-        episode_id,
-        project_id,
-        source_path.name,
-    )
+
     ffmpeg_exe, ffprobe_exe = get_ffmpeg_paths()
-    logger.info(
-        "episode_media job_id=%s using ffmpeg=%s ffprobe=%s",
-        job_id,
-        ffmpeg_exe,
-        ffprobe_exe,
-    )
     if not source_path.is_file():
         raise RuntimeError("Source media missing after upload")
 
@@ -288,23 +356,34 @@ def _run_episode_media_pipeline(
         job_id,
         status="running",
         progress=0.08,
-        message="Reading your audio…" if is_audio_only else "Reading your video…",
+        message="Reading your audio..." if is_audio_only else "Reading your video...",
     )
 
+    # --- Probe duration and enforce limit ---
     t_extract0 = time.perf_counter()
     duration = _ffprobe_duration_seconds(source_path, ffprobe_exe)
     timer.mark("ffprobe_done")
+    _log_stage(job_id, "ffprobe_done", duration_sec=duration or 0)
     _enforce_deadline("after_probe")
-    source_rel = to_rel_storage_path(source_path)
 
+    dur_limit = max_media_duration_sec()
+    if duration is not None and duration > dur_limit:
+        raise RuntimeError(
+            f"Media is too long ({int(duration)}s). "
+            f"Maximum allowed duration is {int(dur_limit)}s ({int(dur_limit // 60)} minutes). "
+            "Please trim the file and re-upload."
+        )
+
+    source_rel = to_rel_storage_path(source_path)
     store.update_episode(
         episode_id,
         source_video_rel=source_rel,
         duration_sec=duration,
     )
 
+    # --- Extract audio to 16 kHz mono WAV ---
     wav_path = source_path.parent / "audio.wav"
-    store.update_job(job_id, progress=0.22, message="Extracting audio (WAV)…")
+    store.update_job(job_id, progress=0.22, message="Extracting audio...")
     if is_audio_only:
         _ffmpeg_normalize_audio(source_path, wav_path, ffmpeg_exe)
     else:
@@ -313,15 +392,17 @@ def _run_episode_media_pipeline(
     store.update_episode(episode_id, extracted_audio_rel=audio_rel)
     job_timing_add_phase(job_id, "extract", time.perf_counter() - t_extract0)
     timer.mark("audio_extract_done")
+    _log_stage(job_id, "audio_extract_done", wav_mb=_file_size_mb(wav_path))
     _enforce_deadline("after_audio_extract")
 
+    # --- Thumbnails ---
     thumb_rels: list[str] = []
     if is_audio_only:
-        store.update_job(job_id, progress=0.45, message="Audio-only import — skipping frames.")
+        store.update_job(job_id, progress=0.45, message="Audio-only import -- skipping frames.")
         store.update_episode(episode_id, thumbnail_rels=[])
         timer.mark("thumbnails_skipped")
     else:
-        store.update_job(job_id, progress=0.45, message="Saving preview frames…")
+        store.update_job(job_id, progress=0.45, message="Saving preview frames...")
         t_th0 = time.perf_counter()
         if duration and duration > 0:
             for i in range(_THUMB_COUNT):
@@ -338,8 +419,10 @@ def _run_episode_media_pipeline(
         store.update_episode(episode_id, thumbnail_rels=thumb_rels)
         job_timing_add_phase(job_id, "thumbnails", time.perf_counter() - t_th0)
         timer.mark("thumbnails_done")
+    _log_stage(job_id, "thumbnails_done")
     _enforce_deadline("after_thumbnails")
 
+    # --- Transcript (remote or local) ---
     wav_abs = (STORAGE_ROOT / audio_rel).resolve()
     language: str | None = None
     t_segments: list = []
@@ -362,51 +445,27 @@ def _run_episode_media_pipeline(
     remote_attempted = False
 
     if is_audio_only:
-        fallback_reason = (
-            "Audio-only import — using on-device transcription."
-        )
-        logger.info(
-            "episode_media job_id=%s audio_only=true skip_remote=true",
-            job_id,
-        )
+        fallback_reason = "Audio-only import -- using on-device transcription."
+        logger.info("episode_media job_id=%s audio_only=true skip_remote=true", job_id)
     elif not azure_vi_config.azure_video_indexer_configured():
         fallback_reason = (
             "AI video analysis is not configured on this machine; "
             "using on-device speech and transcript instead."
         )
-        logger.info(
-            "episode_media job_id=%s %s",
-            job_id,
-            azure_vi_config.startup_log_line(),
-        )
+        logger.info("episode_media job_id=%s %s", job_id, azure_vi_config.startup_log_line())
     elif prefer_local_hindi:
-        fallback_reason = (
-            "Using on-device analysis because CASTWEAVE_HINDI_PREFER_LOCAL is set."
-        )
-        logger.info(
-            "castweave_hindi step=prefer_local_env job_id=%s skip_remote=true",
-            job_id,
-        )
-        store.update_job(
-            job_id,
-            progress=0.52,
-            message="Using on-device analysis for better Hindi quality…",
-        )
+        fallback_reason = "Using on-device analysis because CASTWEAVE_HINDI_PREFER_LOCAL is set."
+        logger.info("castweave_hindi step=prefer_local_env job_id=%s skip_remote=true", job_id)
+        store.update_job(job_id, progress=0.52, message="Using on-device analysis for better Hindi quality...")
     elif skip_remote:
-        fallback_reason = (
-            "Using on-device analysis for this shorter clip so the import finishes sooner."
-        )
+        fallback_reason = "Using on-device analysis for this shorter clip so the import finishes sooner."
         logger.info(
             "episode_media job_id=%s local_first_skip_remote duration_sec=%.2f max_sec=%s",
             job_id,
             duration,
             local_first_lim,
         )
-        store.update_job(
-            job_id,
-            progress=0.52,
-            message="Using on-device analysis for this clip…",
-        )
+        store.update_job(job_id, progress=0.52, message="Using on-device analysis for this clip...")
     else:
         remote_attempted = True
         try:
@@ -422,16 +481,9 @@ def _run_episode_media_pipeline(
                 job_id,
                 episode_id,
             )
-            print(
-                "[characpilot] episode_media: remote analysis branch (verbose VI logs follow)",
-                flush=True,
-            )
             timer.mark("remote_analysis_start")
+            _log_stage(job_id, "remote_analysis_start")
             t_remote_wall = time.perf_counter()
-            logger.info(
-                "[characpilot] JOB TIMING job_id=%s phase=remote_analysis_start",
-                job_id,
-            )
             _enforce_deadline("before_remote_analysis")
             vi_lang, vi_segments = index_local_file_for_episode(
                 source_path,
@@ -439,12 +491,9 @@ def _run_episode_media_pipeline(
                 video_name=f"{episode_id}-{source_path.name}"[:80],
                 job_id=job_id,
             )
-            logger.info(
-                "[characpilot] JOB TIMING job_id=%s phase=remote_analysis_end sec=%.3f",
-                job_id,
-                time.perf_counter() - t_remote_wall,
-            )
+            job_timing_add_phase(job_id, "remote_analysis", time.perf_counter() - t_remote_wall)
             timer.mark("remote_analysis_done")
+            _log_stage(job_id, "remote_analysis_done", sec=round(time.perf_counter() - t_remote_wall, 2))
             _enforce_deadline("after_remote_analysis")
             if vi_segments and len(vi_segments) > 0:
                 language = vi_lang
@@ -462,11 +511,7 @@ def _run_episode_media_pipeline(
                     "Cloud analysis returned no usable transcript; "
                     "switching to on-device transcription."
                 )
-                logger.warning(
-                    "episode_media job_id=%s %s",
-                    job_id,
-                    fallback_reason,
-                )
+                logger.warning("episode_media job_id=%s %s", job_id, fallback_reason)
         except Exception as e:
             fallback_reason = brief_exception_for_fallback(e)
             logger.warning(
@@ -496,28 +541,23 @@ def _run_episode_media_pipeline(
 
     if not t_segments:
         t_local0 = time.perf_counter()
-        store.update_job(
-            job_id,
-            progress=0.62,
-            message="Transcribing on this device…",
-        )
-        logger.info(
-            "transcription start job_id=%s episode_id=%s wav=%s",
-            job_id,
-            episode_id,
-            wav_abs,
-        )
+        store.update_job(job_id, progress=0.62, message="Transcribing on this device...")
+        _log_stage(job_id, "local_transcribe_start")
         timer.mark("local_transcribe_start")
         _enforce_deadline("before_local_transcribe")
         try:
             language, t_segments, asr_diag = transcribe_wav_to_records(wav_abs, episode_id)
         except Exception as e:
             logger.exception("transcription failed episode_id=%s", episode_id)
-            raise RuntimeError(
-                f"Transcription failed: {e}",
-            ) from e
+            raise RuntimeError(f"Transcription failed: {e}") from e
 
         timer.mark("local_transcribe_done")
+        _log_stage(
+            job_id,
+            "local_transcribe_done",
+            segments=len(t_segments),
+            language=language,
+        )
         _enforce_deadline("after_local_transcribe")
         logger.info(
             "transcription model done job_id=%s episode_id=%s segments=%s language=%s coverage=%.3f low=%s retry=%s",
@@ -530,35 +570,33 @@ def _run_episode_media_pipeline(
             bool(asr_diag.get("retry_triggered")),
         )
 
-        store.update_job(
-            job_id,
-            progress=0.78,
-            message="Detecting speakers…",
-        )
+        store.update_job(job_id, progress=0.78, message="Detecting speakers...")
         timer.mark("diarize_start")
+        _log_stage(job_id, "diarize_start")
         try:
             t_segments = assign_speaker_labels(wav_abs, t_segments)
-            logger.info(
-                "diarization done job_id=%s episode_id=%s",
-                job_id,
-                episode_id,
-            )
+            logger.info("diarization done job_id=%s episode_id=%s", job_id, episode_id)
         except Exception as e:
-            logger.warning(
-                "diarization failed (non-fatal) episode_id=%s: %s", episode_id, e,
-            )
+            logger.warning("diarization failed (non-fatal) episode_id=%s: %s", episode_id, e)
         timer.mark("diarize_done")
+        _log_stage(job_id, "diarize_done")
         dt_local = time.perf_counter() - t_local0
         if remote_attempted:
             job_timing_add_phase(job_id, "fallback", dt_local)
         else:
             job_timing_add_phase(job_id, "analysis", dt_local)
 
+    # --- Clean up extracted WAV (transcript is persisted, WAV no longer needed) ---
+    if wav_path and wav_path.is_file():
+        _safe_unlink(wav_path)
+        _log_stage(job_id, "wav_cleaned")
+
+    # --- Persist transcript and finalize ---
     try:
         store.update_job(
             job_id,
             progress=0.88,
-            message="Building transcript and cast candidates…",
+            message="Building transcript and cast candidates...",
         )
         timer.mark("persist_start")
         _enforce_deadline("before_persist")
@@ -643,11 +681,7 @@ def _run_episode_media_pipeline(
         )
         job_timing_add_phase(job_id, "persist", time.perf_counter() - t_fin0)
         total_sec = timer.total_sec()
-        logger.info(
-            "castweave_import_timing job_id=%s stage=PIPELINE_COMPLETE total_sec=%.3f",
-            job_id,
-            total_sec,
-        )
+        _log_stage(job_id, "PIPELINE_COMPLETE", total_sec=round(total_sec, 2))
         job_timing_log_summary(job_id)
         if done is None:
             logger.error(

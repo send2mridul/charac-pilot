@@ -16,9 +16,14 @@ RUN mkdir -p /data/uploads /data/replacements /data/voice_design /data/avatars /
 
 ENV CASTWEAVE_STORAGE_PATH=/data
 ENV PYTHONUNBUFFERED=1
+
+# Production-safe defaults for constrained Railway memory
 ENV WHISPER_MODEL_SIZE=tiny
 ENV WHISPER_MODEL_SIZE_EN=tiny
 ENV WHISPER_MODEL_SIZE_HI=small
+ENV CASTWEAVE_MAX_UPLOAD_MB=500
+ENV CASTWEAVE_MAX_DURATION_SEC=1800
+ENV CASTWEAVE_MAX_CONCURRENT_JOBS=1
 
 EXPOSE 8000
 

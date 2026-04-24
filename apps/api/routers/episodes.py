@@ -1,9 +1,11 @@
 import logging
+import os
 import subprocess
 import tempfile
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
+from starlette.background import BackgroundTask
 
 from db.store import store
 from schemas.character import CharacterOut, CreateCharacterFromGroupBody
@@ -17,6 +19,20 @@ from services import replacement_service
 
 router = APIRouter()
 log = logging.getLogger("characpilot.episodes")
+
+
+def _cleanup_episode_files(project_id: str, episode_id: str) -> None:
+    """Remove upload directory for an episode after DB rows are deleted."""
+    import shutil
+    from storage_paths import UPLOADS_ROOT
+
+    episode_dir = UPLOADS_ROOT / project_id / episode_id
+    if episode_dir.is_dir():
+        try:
+            shutil.rmtree(episode_dir)
+            log.info("cleaned up episode dir: %s", episode_dir)
+        except OSError as e:
+            log.warning("could not clean episode dir %s: %s", episode_dir, e)
 
 
 def _episode_id(episode_id: str) -> str:
@@ -124,8 +140,12 @@ def delete_episode(episode_id: str):
     eid = _episode_id(episode_id)
     log.info("DELETE /episodes/%s", eid)
     episode_service.ensure_uploaded_episode_in_memory(eid)
+    ep = episode_service.get_episode(eid)
+    project_id = ep.project_id if ep else None
     if not store.delete_episode(eid):
         raise HTTPException(status_code=404, detail="Episode not found")
+    if project_id:
+        _cleanup_episode_files(project_id, eid)
 
 
 @router.get("/{episode_id}/segments", response_model=list[TranscriptSegmentOut])
@@ -216,10 +236,17 @@ def get_segment_source_audio(episode_id: str, segment_id: str):
     except Exception as e:
         log.warning("segment audio extract failed: %s", e)
         raise HTTPException(status_code=500, detail="Could not extract segment audio") from e
+    def _cleanup() -> None:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
     return FileResponse(
         tmp.name,
         media_type="audio/wav",
         filename=f"source_{sid}.wav",
+        background=BackgroundTask(_cleanup),
     )
 
 
