@@ -1,11 +1,12 @@
-"""Local filesystem paths for uploads (dev only)."""
+"""Local filesystem paths for uploads and database."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-# apps/api/storage
-STORAGE_ROOT = Path(__file__).resolve().parent / "storage"
+_custom = os.environ.get("CASTWEAVE_STORAGE_PATH", "").strip()
+STORAGE_ROOT = Path(_custom) if _custom else Path(__file__).resolve().parent / "storage"
 UPLOADS_ROOT = STORAGE_ROOT / "uploads"
 DATABASE_PATH = STORAGE_ROOT / "characpilot.db"
 
