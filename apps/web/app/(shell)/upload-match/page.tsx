@@ -1,12 +1,12 @@
 "use client";
 
 import {
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type MouseEvent,
 } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -257,7 +257,7 @@ type PersistedImportContext = {
   media: EpisodeMediaJobResult;
 };
 
-export default function UploadMatchPage() {
+function UploadMatchContent() {
   const toast = useToast();
   const router = useRouter();
   const pathname = usePathname();
@@ -2260,5 +2260,19 @@ export default function UploadMatchPage() {
         <p>Remove this line from the transcript? It will be hidden from exports and generation.</p>
       </ConfirmModal>
     </div>
+  );
+}
+
+export default function UploadMatchPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center text-sm text-foreground-muted">
+          Loading workspace...
+        </div>
+      }
+    >
+      <UploadMatchContent />
+    </Suspense>
   );
 }

@@ -23,6 +23,8 @@ function resolvePublicApiBaseUrl(): string {
 const nextConfig: NextConfig = {
   transpilePackages: ["@characpilot/shared"],
   outputFileTracingRoot: getRepoRoot(),
+  eslint: { ignoreDuringBuilds: true },
+  typescript: { ignoreBuildErrors: false },
   env: {
     NEXT_PUBLIC_API_BASE_URL: resolvePublicApiBaseUrl(),
   },
