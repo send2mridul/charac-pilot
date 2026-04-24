@@ -16,6 +16,7 @@ ffmpeg -version
 ffprobe -version
 ```
 
+
 ### PATH from IDEs (Windows)
 
 If those commands work in PowerShell but the API still cannot find FFmpeg, the process may have a shorter `PATH` (common when launching from an IDE). This API **merges** `PATH` with the User and Machine entries from the Windows registry when resolving binaries.

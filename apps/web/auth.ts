@@ -16,13 +16,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async signIn({ user, account }) {
       if (!user.email) return false;
 
-      await upsertUser({
-        id: account?.providerAccountId ?? user.id ?? crypto.randomUUID(),
-        email: user.email,
-        name: user.name ?? null,
-        avatar_url: user.image ?? null,
-        auth_provider: account?.provider ?? "google",
-      });
+      try {
+        await upsertUser({
+          id: account?.providerAccountId ?? user.id ?? crypto.randomUUID(),
+          email: user.email,
+          name: user.name ?? null,
+          avatar_url: user.image ?? null,
+          auth_provider: account?.provider ?? "google",
+        });
+      } catch (err) {
+        console.error("[auth] upsertUser failed, allowing sign-in anyway:", err);
+      }
 
       return true;
     },
