@@ -9,6 +9,7 @@ from pathlib import Path
 from db.store import ReplacementRecord, TranscriptSegmentRecord, _now_iso, store
 from schemas.replacement import PatchReplacementBody, ReplacementOut
 from services import episode_service
+from services.r2_storage import bucket_for_key, delete_object, r2_configured
 from storage_paths import STORAGE_ROOT, to_rel_storage_path
 from services.tts_service import elevenlabs_language_code, synthesize_line_to_file
 from services.transcript_text_normalize import synthesis_text_for_replacement
@@ -57,13 +58,16 @@ def _find_segment(episode_id: str, segment_id: str) -> TranscriptSegmentRecord |
 def _unlink_audio(rel_path: str) -> None:
     if not rel_path:
         return
-    p = STORAGE_ROOT / rel_path.replace("\\", "/")
+    key = rel_path.replace("\\", "/")
+    p = STORAGE_ROOT / key
     try:
         if p.is_file():
             p.unlink()
             log.info("deleted replacement audio file %s", p)
     except OSError as e:
         log.warning("could not delete audio %s: %s", p, e)
+    if r2_configured():
+        delete_object(bucket_for_key(key), key)
 
 
 def create_replacement(

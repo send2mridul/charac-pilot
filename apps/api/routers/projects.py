@@ -54,6 +54,12 @@ def create_project(body: ProjectCreate):
 
 def _delete_project_response(project_id: str) -> Response:
     import shutil
+    from services.r2_storage import (
+        artifacts_bucket,
+        delete_prefix,
+        r2_configured,
+        uploads_bucket,
+    )
 
     if not project_service.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -65,6 +71,13 @@ def _delete_project_response(project_id: str) -> Response:
             logger.info("cleaned up project upload dir: %s", project_upload_dir)
         except OSError as e:
             logger.warning("could not clean project upload dir %s: %s", project_upload_dir, e)
+
+    if r2_configured():
+        n = delete_prefix(uploads_bucket(), f"uploads/{project_id}/")
+        n += delete_prefix(artifacts_bucket(), f"previews/")
+        n += delete_prefix(artifacts_bucket(), f"clips/")
+        if n:
+            logger.info("deleted %d R2 objects for project %s", n, project_id)
     return Response(status_code=204)
 
 
@@ -87,6 +100,7 @@ def list_project_clips(project_id: str):
 
 @router.get("/{project_id}/clips/download-all")
 def download_project_clips_zip(project_id: str):
+    from services.r2_storage import bucket_for_key, download_file as r2_dl, r2_configured as r2_on
     if not project_service.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     from db.store import store
@@ -94,9 +108,15 @@ def download_project_clips_zip(project_id: str):
     if not rows:
         raise HTTPException(status_code=404, detail="No clips for this project yet")
     buf = io.BytesIO()
+    temp_files: list[Path] = []
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for i, rec in enumerate(rows):
             path = _STORAGE_ROOT / rec.audio_path
+            if not path.is_file() and r2_on():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                key = rec.audio_path.replace("\\", "/")
+                if r2_dl(bucket_for_key(key), key, path):
+                    temp_files.append(path)
             if not path.is_file():
                 continue
             safe = "".join(
@@ -104,6 +124,11 @@ def download_project_clips_zip(project_id: str):
             ).strip()[:48] or rec.id
             ext = path.suffix or ".wav"
             zf.write(path, arcname=f"{i + 1:03d}_{safe}{ext}")
+    for tp in temp_files:
+        try:
+            tp.unlink()
+        except OSError:
+            pass
     buf.seek(0)
     return StreamingResponse(
         buf,

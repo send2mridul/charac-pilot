@@ -12,6 +12,7 @@ import urllib.request
 import uuid
 from typing import Any
 
+from services.r2_storage import upload_local_and_clean
 from storage_paths import STORAGE_ROOT, to_rel_storage_path
 
 log = logging.getLogger("characpilot.elevenlabs_ttv")
@@ -139,6 +140,7 @@ def write_preview_files(
         path = base / f"{i}.mp3"
         path.write_bytes(raw)
         rel = to_rel_storage_path(path)
+        upload_local_and_clean(path, rel)
         out.append(
             {
                 "generated_voice_id": gid,

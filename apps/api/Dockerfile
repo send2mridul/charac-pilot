@@ -25,6 +25,10 @@ ENV CASTWEAVE_MAX_UPLOAD_MB=500
 ENV CASTWEAVE_MAX_DURATION_SEC=1800
 ENV CASTWEAVE_MAX_CONCURRENT_JOBS=1
 
+# R2 env vars are set at deploy-time via Railway dashboard (not baked into image)
+# R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
+# R2_BUCKET_UPLOADS, R2_BUCKET_ARTIFACTS, R2_ENDPOINT
+
 EXPOSE 8000
 
 CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1

@@ -14,7 +14,12 @@ from typing import Any
 
 from db.records import CharacterRecord, TranscriptSegmentRecord
 from db.store import store
-from storage_paths import STORAGE_ROOT
+from services.r2_storage import (
+    download_file as r2_download,
+    r2_configured,
+    upload_local_and_clean,
+)
+from storage_paths import STORAGE_ROOT, to_rel_storage_path
 
 log = logging.getLogger("characpilot.source_voice")
 
@@ -40,6 +45,15 @@ def extract_speaker_audio_samples(
         return []
 
     audio_path = STORAGE_ROOT / ep.extracted_audio_rel
+    _r2_temp_audio = False
+    if not audio_path.is_file() and r2_configured():
+        from services.r2_storage import bucket_for_key
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        ok = r2_download(bucket_for_key(ep.extracted_audio_rel), ep.extracted_audio_rel, audio_path)
+        if not ok:
+            log.warning("extract_speaker_audio_samples: R2 download failed for %s", ep.extracted_audio_rel)
+            return []
+        _r2_temp_audio = True
     if not audio_path.is_file():
         log.warning("extract_speaker_audio_samples: audio file missing %s", audio_path)
         return []
@@ -85,6 +99,16 @@ def extract_speaker_audio_samples(
                 total_sec += dur
         except Exception as e:
             log.warning("ffmpeg sample extract failed: %s", e)
+
+    for sp in extracted:
+        rel = to_rel_storage_path(sp)
+        upload_local_and_clean(sp, rel)
+
+    if _r2_temp_audio:
+        try:
+            audio_path.unlink()
+        except OSError:
+            pass
 
     return extracted
 

@@ -22,9 +22,10 @@ log = logging.getLogger("characpilot.episodes")
 
 
 def _cleanup_episode_files(project_id: str, episode_id: str) -> None:
-    """Remove upload directory for an episode after DB rows are deleted."""
+    """Remove upload directory and R2 objects for an episode after DB rows are deleted."""
     import shutil
     from storage_paths import UPLOADS_ROOT
+    from services.r2_storage import delete_prefix, r2_configured, uploads_bucket, artifacts_bucket
 
     episode_dir = UPLOADS_ROOT / project_id / episode_id
     if episode_dir.is_dir():
@@ -33,6 +34,14 @@ def _cleanup_episode_files(project_id: str, episode_id: str) -> None:
             log.info("cleaned up episode dir: %s", episode_dir)
         except OSError as e:
             log.warning("could not clean episode dir %s: %s", episode_dir, e)
+
+    if r2_configured():
+        prefix = f"uploads/{project_id}/{episode_id}/"
+        n = delete_prefix(uploads_bucket(), prefix)
+        n += delete_prefix(artifacts_bucket(), f"replacements/{episode_id}/")
+        n += delete_prefix(artifacts_bucket(), f"speaker_samples/{episode_id}/")
+        if n:
+            log.info("deleted %d R2 objects for episode %s", n, episode_id)
 
 
 def _episode_id(episode_id: str) -> str:
@@ -213,8 +222,17 @@ def get_segment_source_audio(episode_id: str, segment_id: str):
             detail="No extracted audio for this episode. Re-import the video if you expected source playback.",
         )
     audio_path = STORAGE_ROOT / audio_rel
+    _r2_temp_audio = False
     if not audio_path.is_file():
-        raise HTTPException(status_code=404, detail="Audio file missing")
+        from services.r2_storage import bucket_for_key, download_file as r2_download, r2_configured
+        if r2_configured():
+            audio_path.parent.mkdir(parents=True, exist_ok=True)
+            ok = r2_download(bucket_for_key(audio_rel), audio_rel, audio_path)
+            if not ok:
+                raise HTTPException(status_code=404, detail="Audio file missing (R2 download failed)")
+            _r2_temp_audio = True
+        else:
+            raise HTTPException(status_code=404, detail="Audio file missing")
     from services.ffmpeg_bin import get_ffmpeg_paths
 
     ffmpeg_exe, _ffprobe = get_ffmpeg_paths()
@@ -236,11 +254,18 @@ def get_segment_source_audio(episode_id: str, segment_id: str):
     except Exception as e:
         log.warning("segment audio extract failed: %s", e)
         raise HTTPException(status_code=500, detail="Could not extract segment audio") from e
+    _audio_to_clean = audio_path if _r2_temp_audio else None
+
     def _cleanup() -> None:
         try:
             os.unlink(tmp.name)
         except OSError:
             pass
+        if _audio_to_clean:
+            try:
+                _audio_to_clean.unlink()
+            except OSError:
+                pass
 
     return FileResponse(
         tmp.name,

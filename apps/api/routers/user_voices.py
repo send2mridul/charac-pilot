@@ -13,6 +13,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from db.store import store
 from schemas.user_voice import UserVoiceOut
 from services.ffmpeg_bin import get_ffmpeg_paths
+from services.r2_storage import upload_local_and_clean
 from storage_paths import STORAGE_ROOT, to_rel_storage_path
 
 router = APIRouter()
@@ -138,6 +139,9 @@ async def _save_and_clone(
 
     sample_rel = to_rel_storage_path(wav_path)
     el_voice_id = _clone_voice_elevenlabs(name.strip() or "My voice", wav_path)
+    upload_local_and_clean(wav_path, sample_rel)
+    raw_rel = to_rel_storage_path(raw_path)
+    upload_local_and_clean(raw_path, raw_rel)
 
     rec = store.create_user_voice(
         voice_id=voice_id,
@@ -179,6 +183,7 @@ def list_user_voices():
 
 @router.delete("/{voice_id}", status_code=204)
 def delete_user_voice(voice_id: str):
+    from services.r2_storage import bucket_for_key, delete_object, delete_prefix, r2_configured, artifacts_bucket
     rec = store.delete_user_voice(voice_id)
     if not rec:
         raise HTTPException(status_code=404, detail="Voice not found")
@@ -189,4 +194,9 @@ def delete_user_voice(voice_id: str):
                 p.unlink()
         except OSError:
             pass
+        if r2_configured():
+            key = rec.sample_audio_path.replace("\\", "/")
+            delete_object(bucket_for_key(key), key)
+    if r2_configured():
+        delete_prefix(artifacts_bucket(), f"user_voice_samples/{voice_id}/")
     log.info("user voice deleted id=%s", voice_id)

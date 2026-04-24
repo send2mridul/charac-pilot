@@ -690,6 +690,7 @@ class SqliteStore:
         return p
 
     def delete_project(self, project_id: str) -> bool:
+        from services.r2_storage import bucket_for_key, delete_object, r2_configured
         with self._lock:
             cur_clips = self._cx.execute(
                 "SELECT audio_path FROM voice_clips WHERE project_id = ?",
@@ -705,6 +706,9 @@ class SqliteStore:
                         p.unlink()
                     except OSError:
                         pass
+                if r2_configured():
+                    key = rel.replace("\\", "/")
+                    delete_object(bucket_for_key(key), key)
             self._cx.execute(
                 "DELETE FROM voice_clips WHERE project_id = ?",
                 (project_id,),
@@ -846,6 +850,10 @@ class SqliteStore:
                 p.unlink()
             except OSError:
                 pass
+        from services.r2_storage import bucket_for_key, delete_object, r2_configured
+        if r2_configured() and rec.audio_path:
+            key = rec.audio_path.replace("\\", "/")
+            delete_object(bucket_for_key(key), key)
         with self._lock:
             cur = self._cx.execute("DELETE FROM voice_clips WHERE id = ?", (clip_id,))
             n = cur.rowcount or 0

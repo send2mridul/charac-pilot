@@ -117,10 +117,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 
-from routers import characters, clips, episodes, health, jobs, projects, user_voices, voices
+from routers import characters, clips, episodes, health, jobs, media, projects, user_voices, voices
 from services.ffmpeg_bin import log_ffmpeg_detection
 from storage_paths import STORAGE_ROOT, ensure_storage_dirs
 
@@ -210,4 +209,4 @@ app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(user_voices.router, prefix="/user-voices", tags=["user-voices"])
 
 STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
-app.mount("/media", StaticFiles(directory=str(STORAGE_ROOT)), name="media")
+app.include_router(media.router, tags=["media"])

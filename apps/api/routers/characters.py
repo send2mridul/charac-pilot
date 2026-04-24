@@ -31,6 +31,11 @@ from schemas.voice_clip import VoiceClipOut
 from services import character_service, job_service
 from services.character_avatar import save_character_avatar_file
 from services.draft_line_generation import generate_draft_lines, generate_line_texts
+from services.r2_storage import (
+    download_file as r2_download,
+    r2_configured,
+    upload_local_and_clean,
+)
 from services.tts_service import generate_preview
 from services.voice_clip_service import list_for_character
 from storage_paths import STORAGE_ROOT, ensure_storage_dirs, to_rel_storage_path
@@ -72,15 +77,24 @@ def _generate_and_store_clips(
         provider_used = str(result.get("provider") or provider_used)
         rel_preview = str(result.get("audio_relpath") or "")
         src = STORAGE_ROOT / rel_preview
-        if not src.is_file():
-            continue
         clip_uid = f"vcp-{uuid.uuid4().hex[:12]}"
         clip_dir = STORAGE_ROOT / "clips" / character_id
         clip_dir.mkdir(parents=True, exist_ok=True)
-        ext = src.suffix or ".wav"
-        dest = clip_dir / f"{clip_uid}{ext}"
-        shutil.copy2(src, dest)
+        ext_suffix = Path(rel_preview).suffix or ".wav"
+        dest = clip_dir / f"{clip_uid}{ext_suffix}"
+
+        if src.is_file():
+            shutil.copy2(src, dest)
+        elif r2_configured():
+            from services.r2_storage import bucket_for_key
+            ok = r2_download(bucket_for_key(rel_preview), rel_preview, dest)
+            if not ok:
+                continue
+        else:
+            continue
+
         clip_rel = to_rel_storage_path(dest)
+        upload_local_and_clean(dest, clip_rel)
         if prefix:
             title = f"{prefix} {idx}"
         else:
@@ -122,6 +136,7 @@ def list_character_clips(character_id: str):
 
 @router.get("/{character_id}/clips/download-all")
 def download_character_clips_zip(character_id: str):
+    from services.r2_storage import bucket_for_key, download_file as r2_dl, r2_configured as r2_on
     c = character_service.get_character(character_id)
     if not c:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -129,9 +144,17 @@ def download_character_clips_zip(character_id: str):
     if not rows:
         raise HTTPException(status_code=404, detail="No clips for this character yet")
     buf = io.BytesIO()
+    temp_files: list[Path] = []
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for i, rec in enumerate(rows):
             path = STORAGE_ROOT / rec.audio_path
+            fetched = False
+            if not path.is_file() and r2_on():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                key = rec.audio_path.replace("\\", "/")
+                if r2_dl(bucket_for_key(key), key, path):
+                    temp_files.append(path)
+                    fetched = True
             if not path.is_file():
                 continue
             safe = "".join(
@@ -139,6 +162,11 @@ def download_character_clips_zip(character_id: str):
             ).strip()[:48] or rec.id
             ext = path.suffix or ".wav"
             zf.write(path, arcname=f"{i + 1:03d}_{safe}{ext}")
+    for tp in temp_files:
+        try:
+            tp.unlink()
+        except OSError:
+            pass
     buf.seek(0)
     return StreamingResponse(
         buf,
@@ -212,15 +240,24 @@ def generate_preview_endpoint(character_id: str, body: GeneratePreviewBody):
 
     if body.save_clip and rel_preview:
         src = STORAGE_ROOT / rel_preview
+        ensure_storage_dirs()
+        clip_uid = f"vcp-{uuid.uuid4().hex[:12]}"
+        clip_dir = STORAGE_ROOT / "clips" / character_id
+        clip_dir.mkdir(parents=True, exist_ok=True)
+        ext_s = Path(rel_preview).suffix or ".wav"
+        dest = clip_dir / f"{clip_uid}{ext_s}"
+
+        _copied = False
         if src.is_file():
-            ensure_storage_dirs()
-            clip_uid = f"vcp-{uuid.uuid4().hex[:12]}"
-            clip_dir = STORAGE_ROOT / "clips" / character_id
-            clip_dir.mkdir(parents=True, exist_ok=True)
-            ext = src.suffix or ".wav"
-            dest = clip_dir / f"{clip_uid}{ext}"
             shutil.copy2(src, dest)
+            _copied = True
+        elif r2_configured():
+            from services.r2_storage import bucket_for_key
+            _copied = r2_download(bucket_for_key(rel_preview), rel_preview, dest)
+
+        if _copied and dest.is_file():
             clip_rel = to_rel_storage_path(dest)
+            upload_local_and_clean(dest, clip_rel)
             vid = (body.voice_id or c.default_voice_id) or ""
             vname = (c.voice_display_name or "") if c else ""
             hint = ""
@@ -403,6 +440,14 @@ def avatar_from_episode_thumbnail(character_id: str, body: AvatarFromEpisodeThum
         raise HTTPException(status_code=400, detail="Thumbnail index out of range")
     rel = thumbs[body.thumb_index]
     src = (STORAGE_ROOT / rel).resolve()
+    _r2_temp_thumb = False
+    if not src.is_file() and r2_configured():
+        from services.r2_storage import bucket_for_key
+        src.parent.mkdir(parents=True, exist_ok=True)
+        ok = r2_download(bucket_for_key(rel), rel, src)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Thumbnail file missing")
+        _r2_temp_thumb = True
     if not src.is_file():
         raise HTTPException(status_code=404, detail="Thumbnail file missing")
     ensure_storage_dirs()
@@ -416,7 +461,13 @@ def avatar_from_episode_thumbnail(character_id: str, body: AvatarFromEpisodeThum
         shutil.copy2(src, dest)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Could not copy image: {e}") from e
+    if _r2_temp_thumb:
+        try:
+            src.unlink()
+        except OSError:
+            pass
     out_rel = to_rel_storage_path(dest)
+    upload_local_and_clean(dest, out_rel)
     updated = character_service.update_character(character_id, thumbnail_paths=[out_rel])
     if not updated:
         raise HTTPException(status_code=404, detail="Character not found")

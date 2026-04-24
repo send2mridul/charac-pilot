@@ -42,6 +42,13 @@ from services.transcript_text_normalize import (
     normalize_video_indexer_language,
 )
 from services.ffmpeg_bin import get_ffmpeg_paths
+from services.r2_storage import (
+    artifacts_bucket,
+    bucket_for_key,
+    r2_configured,
+    upload_file as r2_upload_file,
+    uploads_bucket,
+)
 from storage_paths import STORAGE_ROOT, to_rel_storage_path
 
 logger = logging.getLogger(__name__)
@@ -590,6 +597,30 @@ def _run_episode_media_pipeline(
     if wav_path and wav_path.is_file():
         _safe_unlink(wav_path)
         _log_stage(job_id, "wav_cleaned")
+
+    # --- Upload to R2 and clean local ---
+    if r2_configured():
+        _log_stage(job_id, "r2_upload_start")
+        try:
+            r2_upload_file(source_path, bucket_for_key(source_rel), source_rel)
+            _log_stage(job_id, "r2_source_uploaded", key=source_rel)
+
+            for trel in thumb_rels:
+                local_thumb = STORAGE_ROOT / trel
+                if local_thumb.is_file():
+                    r2_upload_file(local_thumb, bucket_for_key(trel), trel)
+
+            _log_stage(job_id, "r2_thumbs_uploaded", count=len(thumb_rels))
+
+            _safe_unlink(source_path)
+            for trel in thumb_rels:
+                _safe_unlink(STORAGE_ROOT / trel)
+
+            _log_stage(job_id, "r2_local_cleaned")
+        except Exception as exc:
+            logger.warning(
+                "R2 upload failed job_id=%s (local files kept): %s", job_id, exc
+            )
 
     # --- Persist transcript and finalize ---
     try:

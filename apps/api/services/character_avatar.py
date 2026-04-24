@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile
 
 from services import character_service
+from services.r2_storage import upload_local_and_clean
 from storage_paths import STORAGE_ROOT, ensure_storage_dirs, to_rel_storage_path
 
 _AVATAR_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
@@ -35,6 +36,7 @@ async def save_character_avatar_file(character_id: str, file: UploadFile):
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Could not save image: {e}") from e
     rel = to_rel_storage_path(dest)
+    upload_local_and_clean(dest, rel)
     updated = character_service.update_character(character_id, thumbnail_paths=[rel])
     if not updated:
         raise HTTPException(status_code=404, detail="Character not found")

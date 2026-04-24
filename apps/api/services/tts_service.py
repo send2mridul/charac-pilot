@@ -9,6 +9,7 @@ import uuid
 import wave
 from pathlib import Path
 
+from services.r2_storage import upload_local_and_clean
 from storage_paths import STORAGE_ROOT
 
 log = logging.getLogger("characpilot.tts")
@@ -167,6 +168,7 @@ def generate_preview(
         log.info("stub preview (no ELEVENLABS_API_KEY) id=%s", preview_id)
 
     rel = out_path.resolve().relative_to(STORAGE_ROOT.resolve()).as_posix()
+    upload_local_and_clean(out_path, rel)
     audio_url = f"/media/{rel}"
 
     return {
@@ -209,14 +211,20 @@ def synthesize_line_to_file(
                 out_mp3,
                 duration_ms,
             )
+            rel = out_mp3.resolve().relative_to(STORAGE_ROOT.resolve()).as_posix()
+            upload_local_and_clean(out_mp3, rel)
             return duration_ms, "primary", False, out_mp3
         except Exception as e:
             log.warning("synthesize_line_to_file elevenlabs failed, stub: %s", e)
             out_wav = out_base_no_ext.with_suffix(".wav")
             duration_ms = _generate_silent_wav(out_wav)
+            rel = out_wav.resolve().relative_to(STORAGE_ROOT.resolve()).as_posix()
+            upload_local_and_clean(out_wav, rel)
             return duration_ms, "fallback", True, out_wav
 
     out_wav = out_base_no_ext.with_suffix(".wav")
     duration_ms = _generate_silent_wav(out_wav)
     log.info("synthesize_line_to_file stub (no API key) path=%s", out_wav)
+    rel = out_wav.resolve().relative_to(STORAGE_ROOT.resolve()).as_posix()
+    upload_local_and_clean(out_wav, rel)
     return duration_ms, "fallback", True, out_wav
