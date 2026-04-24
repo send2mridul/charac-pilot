@@ -13,8 +13,10 @@ def get_episode(episode_id: str) -> EpisodeOut | None:
     return _to_out(e) if e else None
 
 
-def create_upload_episode(project_id: str, title: str) -> EpisodeOut:
-    rec = store.create_episode(project_id, title, status="processing")
+def create_upload_episode(
+    project_id: str, title: str, media_type: str = "video",
+) -> EpisodeOut:
+    rec = store.create_episode(project_id, title, status="processing", media_type=media_type)
     return _to_out(rec)
 
 
@@ -36,4 +38,5 @@ def _to_out(e: EpisodeRecord) -> EpisodeOut:
         thumbnail_paths=list(e.thumbnail_rels),
         duration_sec=e.duration_sec,
         transcript_language=e.transcript_language,
+        media_type=e.media_type,
     )

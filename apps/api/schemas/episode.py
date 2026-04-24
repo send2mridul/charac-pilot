@@ -13,6 +13,7 @@ class EpisodeOut(BaseModel):
     thumbnail_paths: list[str] = Field(default_factory=list)
     duration_sec: float | None = None
     transcript_language: str | None = None
+    media_type: str = "video"
 
 
 class EpisodeUploadBody(BaseModel):

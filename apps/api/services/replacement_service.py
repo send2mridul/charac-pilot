@@ -41,6 +41,9 @@ def _to_out(r: ReplacementRecord) -> ReplacementOut:
         fallback_used=r.fallback_used,
         created_at=r.created_at,
         updated_at=r.updated_at,
+        take_number=r.take_number,
+        is_active_take=r.is_active_take,
+        delivery_preset=r.delivery_preset,
     )
 
 
@@ -250,3 +253,84 @@ def delete_replacement(episode_id: str, replacement_id: str) -> None:
         raise ValueError("Replacement not found")
     _unlink_audio(rec.generated_audio_path)
     log.info("replacement deleted id=%s episode=%s", replacement_id, episode_id)
+
+
+def create_take(
+    episode_id: str,
+    segment_id: str,
+    character_id: str,
+    replacement_text: str,
+    delivery_preset: str = "neutral",
+    is_first: bool = True,
+) -> ReplacementOut:
+    """Generate a single take with a delivery preset. Used by generate-takes endpoint."""
+    from services.delivery_presets import voice_settings_for_preset
+
+    episode_service.ensure_uploaded_episode_in_memory(episode_id)
+    ep = store.get_episode(episode_id)
+    if not ep:
+        raise ValueError("Episode not found")
+
+    seg = _find_segment(episode_id, segment_id)
+    if not seg:
+        raise ValueError("Segment not found")
+
+    ch = store.get_character(character_id)
+    if not ch:
+        raise ValueError("Character not found")
+    if not ch.default_voice_id:
+        raise ValueError("Character has no assigned voice")
+
+    voice_id = ch.default_voice_id
+    voice_name = ch.voice_display_name or ch.default_voice_id
+    take_num = store.next_take_number(episode_id, segment_id, character_id)
+
+    if is_first:
+        store.deactivate_takes_for_segment(episode_id, segment_id, character_id)
+
+    replacement_id = f"rep-{uuid.uuid4().hex[:12]}"
+    out_base = REPL_ROOT / episode_id / segment_id / replacement_id
+
+    text = replacement_text.strip()
+    lang_code = elevenlabs_language_code(ep.transcript_language)
+    synth_text = synthesis_text_for_replacement(ep.transcript_language, seg, text)
+    vs_override = voice_settings_for_preset(delivery_preset)
+
+    _duration_ms, provider, fallback, final_path = synthesize_line_to_file(
+        synth_text,
+        voice_id,
+        None,
+        out_base,
+        language_code=lang_code,
+        voice_settings_override=vs_override,
+    )
+
+    rel = to_rel_storage_path(final_path)
+    ts = _now_iso()
+
+    rec = ReplacementRecord(
+        replacement_id=replacement_id,
+        episode_id=episode_id,
+        segment_id=segment_id,
+        character_id=character_id,
+        character_name=ch.name,
+        selected_voice_id=voice_id,
+        selected_voice_name=voice_name,
+        original_text=seg.text,
+        replacement_text=text,
+        tone_style=None,
+        generated_audio_path=rel,
+        provider_used=provider,
+        fallback_used=fallback,
+        created_at=ts,
+        updated_at=ts,
+        take_number=take_num,
+        is_active_take=1 if is_first else 0,
+        delivery_preset=delivery_preset,
+    )
+    store.add_replacement(rec)
+    log.info(
+        "take created id=%s ep=%s seg=%s take=%d preset=%s",
+        replacement_id, episode_id, segment_id, take_num, delivery_preset,
+    )
+    return _to_out(rec)

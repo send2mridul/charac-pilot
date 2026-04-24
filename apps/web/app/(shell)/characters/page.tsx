@@ -5,15 +5,12 @@ import {
   BookOpen,
   Camera,
   ChevronDown,
-  ExternalLink,
   ImageIcon,
   Mic2,
   Pencil,
   Play,
   Plus,
   Quote,
-  Repeat,
-  Sparkles,
   Trash2,
   Upload,
   X,
@@ -319,43 +316,38 @@ export default function CharactersPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
-      <div className="flex flex-wrap items-end justify-between gap-6 pb-2">
-        <div className="max-w-xl">
-          <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-            {characters.length} character{characters.length === 1 ? "" : "s"} in roster
+    <div className="flex flex-col h-full min-h-0">
+      <header className="h-16 shrink-0 bg-surface border-b border-border flex items-center px-10 gap-6">
+        <div className="flex items-center gap-3 min-w-0">
+          <h1 className="text-[18px] font-bold tracking-tight truncate">Characters</h1>
+          <span className="text-[13px] text-foreground-muted hidden sm:block">
+            Your full cast roster. {characters.length} character{characters.length === 1 ? "" : "s"}{voicedCount > 0 ? `, ${voicedCount} voiced` : ""}
           </span>
-          <h1 className="mt-4 font-display text-5xl font-semibold leading-[1.05] tracking-tight text-balance text-foreground md:text-6xl">
-            Characters
-          </h1>
-          <p className="mt-3 max-w-md text-[15px] leading-relaxed text-muted-foreground">
-            Build your cast here or from Import from Video. Then attach voices, generate clips, and finish in Replace Lines.
-          </p>
         </div>
-        <Link
-          href="/upload-match"
-          className={buttonClass(
-            "secondary",
-            "inline-flex h-12 items-center gap-2 rounded-xl border-border-strong bg-surface px-5 text-sm font-semibold shadow-soft hover:border-foreground hover:bg-foreground hover:text-background",
-          )}
-        >
-          <Upload className="h-4 w-4" />
-          Import from Video
-        </Link>
-      </div>
+        <div className="ml-auto flex items-center gap-3">
+          <Link
+            href="/upload-match"
+            className={buttonClass(
+              "secondary",
+              "inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-[13px] font-semibold hover:bg-canvas transition-colors",
+            )}
+          >
+            <Upload className="size-3.5" />
+            Import from Video
+          </Link>
+        </div>
+      </header>
 
-      <section className="relative overflow-hidden rounded-3xl border border-border bg-surface shadow-soft">
-        <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-primary/5 blur-3xl" />
+      <div className="flex-1 overflow-y-auto">
+        <div className="px-10 py-8 max-w-[1600px] mx-auto space-y-8">
 
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-gradient-warm px-6 py-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Project
-            </span>
+      <section className="rounded-xl border border-border bg-surface">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-6 py-3">
+          <div className="flex items-center gap-3">
+            <span className="label-eyebrow text-foreground-muted">Project</span>
             <div className="relative">
               <select
-                className="group flex cursor-pointer appearance-none items-center gap-2 rounded-xl border border-border bg-surface py-1.5 pl-3 pr-9 text-sm font-semibold text-foreground outline-none transition-colors hover:border-foreground/40"
+                className="appearance-none rounded-lg border border-border bg-canvas py-1.5 pl-3 pr-8 text-[13px] font-semibold text-foreground outline-none transition-colors hover:border-foreground/40 focus:ring-2 focus:ring-primary/20"
                 value={activeProjectId ?? ""}
                 disabled={projectsLoading || projects.length === 0}
                 onChange={(e) => setActiveProjectId(e.target.value)}
@@ -370,78 +362,65 @@ export default function CharactersPage() {
                   ))
                 )}
               </select>
-              <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
-                <ChevronDown className="h-3.5 w-3.5" />
+              <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-muted">
+                <ChevronDown className="size-3.5" />
               </span>
             </div>
-          </div>
-          <div className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:inline-flex">
-            <Sparkles className="h-3 w-3 text-primary" />
-            Auto-detect speakers
           </div>
         </div>
 
         {activeProjectId && !projectsLoading ? (
-          <div className="relative px-6 py-6">
-            <div className="mb-5 flex items-end justify-between gap-4">
-              <div>
-                <h2 className="font-display text-xl font-semibold tracking-tight text-foreground">
-                  Add a character
-                </h2>
-                <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                  Manual entry is always available. Import from Video can also create characters from detected speakers.
-                </p>
-              </div>
+          <div className="px-6 py-5">
+            <div className="mb-4">
+              <h2 className="text-[16px] font-bold tracking-tight">Add a character</h2>
+              <p className="mt-0.5 text-[13px] text-foreground-muted">
+                Manual entry. Import from Video can also create characters from detected speakers.
+              </p>
             </div>
-            <form onSubmit={(e) => void handleAddCharacter(e)} className="space-y-4">
+            <form onSubmit={(e) => void handleAddCharacter(e)} className="space-y-3">
               <div>
-                <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  Name
-                </label>
+                <label className="label-eyebrow mb-1 block text-foreground-muted">Name</label>
                 <input
-                  className="h-11 w-full rounded-xl border border-border bg-surface-sunken/50 px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-primary focus:bg-surface focus:ring-2 focus:ring-primary/20"
+                  className="h-10 w-full rounded-lg border border-border bg-canvas px-3 text-[13px] text-foreground outline-none placeholder:text-foreground-muted/60 focus:border-primary focus:ring-2 focus:ring-primary/20"
                   placeholder="e.g. Mara Voss"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                 />
               </div>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
-                  <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                    Role <span className="text-muted-foreground/60">(optional)</span>
+                  <label className="label-eyebrow mb-1 block text-foreground-muted">
+                    Role <span className="opacity-50">(optional)</span>
                   </label>
                   <input
-                    className="h-11 w-full rounded-xl border border-border bg-surface-sunken/50 px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:bg-surface focus:ring-2 focus:ring-primary/20"
-                    placeholder="Lead, narrator, guestâ€¦"
+                    className="h-10 w-full rounded-lg border border-border bg-canvas px-3 text-[13px] text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    placeholder="Lead, narrator, guest..."
                     value={newRole}
                     onChange={(e) => setNewRole(e.target.value)}
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                    Notes <span className="text-muted-foreground/60">(optional)</span>
+                  <label className="label-eyebrow mb-1 block text-foreground-muted">
+                    Notes <span className="opacity-50">(optional)</span>
                   </label>
                   <input
-                    className="h-11 w-full rounded-xl border border-border bg-surface-sunken/50 px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:bg-surface focus:ring-2 focus:ring-primary/20"
+                    className="h-10 w-full rounded-lg border border-border bg-canvas px-3 text-[13px] text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                     placeholder="Wardrobe, mannerisms, context"
                     value={newNotes}
                     onChange={(e) => setNewNotes(e.target.value)}
                   />
                 </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                <p className="text-[11px] text-muted-foreground">
-                  Tip: add a photo and short bio after creating to improve voice matching.
-                </p>
+              <div className="flex items-center justify-end gap-3 pt-1">
                 <button
                   type="submit"
                   disabled={creating || !newName.trim()}
-                  className="group inline-flex h-11 items-center gap-2 rounded-xl bg-gradient-teal px-5 text-sm font-semibold text-primary-foreground shadow-glow transition hover:opacity-95 disabled:opacity-50"
+                  className="inline-flex h-9 items-center gap-2 rounded-lg bg-foreground px-4 text-[13px] font-semibold text-background transition-colors hover:bg-foreground/90 disabled:opacity-50"
                 >
                   {creating ? (
-                    <Spinner className="h-4 w-4 border-t-primary-foreground" />
+                    <Spinner className="size-4 border-t-background" />
                   ) : (
-                    <Plus className="h-4 w-4 transition-transform group-hover:rotate-90" />
+                    <Plus className="size-4" />
                   )}
                   Add character
                 </button>
@@ -460,37 +439,37 @@ export default function CharactersPage() {
           role="dialog"
           aria-modal="true"
         >
-          <div className="relative w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-lifted">
+          <div className="relative w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-md">
             <button
               type="button"
-              className="absolute right-4 top-4 rounded-lg p-1 text-muted-foreground hover:bg-surface-sunken hover:text-foreground"
+              className="absolute right-4 top-4 rounded-md p-1 text-foreground-muted hover:bg-canvas hover:text-foreground"
               onClick={() => setEditId(null)}
               aria-label="Close"
             >
-              <X className="h-4 w-4" />
+              <X className="size-4" />
             </button>
-            <h2 className="font-display text-lg font-semibold text-foreground">Edit character</h2>
+            <h2 className="text-[16px] font-bold tracking-tight">Edit character</h2>
             <div className="mt-4 space-y-3">
               <div>
-                <label className="text-[11px] font-medium text-muted-foreground">Name</label>
+                <label className="label-eyebrow mb-1 block text-foreground-muted">Name</label>
                 <input
-                  className="mt-1 w-full rounded-lg border border-border bg-surface-sunken/50 px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="h-10 w-full rounded-lg border border-border bg-canvas px-3 text-[13px] text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                 />
               </div>
               <div>
-                <label className="text-[11px] font-medium text-muted-foreground">Role</label>
+                <label className="label-eyebrow mb-1 block text-foreground-muted">Role</label>
                 <input
-                  className="mt-1 w-full rounded-lg border border-border bg-surface-sunken/50 px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="h-10 w-full rounded-lg border border-border bg-canvas px-3 text-[13px] text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   value={editRole}
                   onChange={(e) => setEditRole(e.target.value)}
                 />
               </div>
               <div>
-                <label className="text-[11px] font-medium text-muted-foreground">Notes</label>
+                <label className="label-eyebrow mb-1 block text-foreground-muted">Notes</label>
                 <textarea
-                  className="mt-1 w-full rounded-lg border border-border bg-surface-sunken/50 px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   rows={3}
                   value={editNotes}
                   onChange={(e) => setEditNotes(e.target.value)}
@@ -546,13 +525,13 @@ export default function CharactersPage() {
       />
 
       {projectsLoading || loading ? (
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-          <div className="rounded-3xl border border-border bg-surface p-6 shadow-soft">
-            <Skeleton className="h-32 w-full" />
-          </div>
-          <div className="rounded-3xl border border-border bg-surface p-6 shadow-soft">
-            <Skeleton className="h-32 w-full" />
-          </div>
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-xl border border-border bg-surface p-5">
+              <Skeleton className="h-28 w-full rounded-lg" />
+              <Skeleton className="mt-3 h-4 w-3/4" />
+            </div>
+          ))}
         </div>
       ) : !activeProjectId ? (
         <EmptyState
@@ -568,22 +547,16 @@ export default function CharactersPage() {
         />
       ) : (
         <>
-          <div className="mt-12 flex items-end justify-between pb-5">
+          <div className="flex items-end justify-between pb-4">
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Roster
-              </div>
-              <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight text-foreground">
-                Your cast
-              </h2>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              <span className="font-mono font-semibold text-foreground">{characters.length}</span> total Â·{" "}
-              <span className="font-mono font-semibold text-foreground">{voicedCount}</span> voices designed
+              <h2 className="text-[18px] font-bold tracking-tight">Your cast</h2>
+              <p className="text-[13px] text-foreground-muted mt-0.5">
+                {characters.length} total, {voicedCount} voices designed
+              </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
             {characters.map((c, idx) => {
               const av = avatarSrc(c);
               const accent = accentForIndex(idx);
@@ -591,241 +564,168 @@ export default function CharactersPage() {
               return (
                 <article
                   key={c.id}
-                  className="group relative flex flex-col overflow-hidden rounded-3xl border border-border bg-surface shadow-soft transition-all duration-300 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-elegant"
+                  className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-surface hover:border-border-strong hover:shadow-sm transition-all"
                 >
-                  <div className={`h-24 bg-gradient-to-br ${accentRibbon[accent]}`} />
+                  <div className={`h-16 bg-gradient-to-br ${accentRibbon[accent]}`} />
 
-                  <div className="relative -mt-14 px-6 pb-6">
+                  <div className="relative -mt-8 px-5 pb-5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="relative">
-                        <div className="relative h-20 w-20 overflow-hidden rounded-2xl border-4 border-surface bg-surface-sunken shadow-elegant">
+                        <div className="relative size-14 overflow-hidden rounded-xl border-[3px] border-surface bg-canvas">
                           {av ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={av} alt="" className="h-full w-full object-cover" />
                           ) : (
-                            <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-                              <ImageIcon className="h-7 w-7" />
+                            <div className="flex h-full w-full items-center justify-center text-foreground-muted">
+                              <ImageIcon className="size-5" />
                             </div>
                           )}
                           {avatarUploading === c.id ? (
                             <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                              <Spinner className="h-5 w-5 border-t-primary" />
+                              <Spinner className="size-4 border-t-primary" />
                             </div>
                           ) : null}
                         </div>
-                        <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full border-2 border-surface bg-primary text-[10px] font-bold text-primary-foreground shadow-soft">
-                          {c.name[0]?.toUpperCase() ?? "?"}
-                        </span>
                       </div>
 
-                      <div className="mt-14 flex flex-col items-end gap-1.5">
+                      <div className="mt-10 flex items-center gap-1.5">
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-foreground transition-colors hover:border-foreground hover:bg-foreground hover:text-background"
+                          className="inline-flex items-center gap-1 rounded-md border border-border bg-canvas px-2 py-1 text-[11px] font-semibold text-foreground transition-colors hover:bg-foreground hover:text-background"
                           onClick={() => openEdit(c)}
                         >
-                          <Pencil className="h-3 w-3" />
+                          <Pencil className="size-3" />
                           Edit
                         </button>
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 hover:underline dark:text-red-400"
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
                           onClick={() => void removeCharacter(c)}
                         >
-                          <Trash2 className="h-3 w-3" />
-                          Remove
+                          <Trash2 className="size-3" />
                         </button>
                       </div>
                     </div>
 
-                    <div className="mt-4">
-                      <h3 className="font-display text-2xl font-semibold leading-none tracking-tight text-foreground">
-                        {c.name}
-                      </h3>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                        <span className="inline-flex items-center gap-1">
-                          <span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
-                          {c.source_episode_id
-                            ? `From Import Â· ${episodeTitleById[c.source_episode_id] ?? "episode"}`
-                            : "Added manually"}
-                        </span>
-                        {c.source_speaker_labels.length > 0 ? (
-                          <span className="text-[10px] opacity-80">
-                            Voice label: {c.source_speaker_labels.join(", ")}
-                          </span>
-                        ) : null}
+                    <div className="mt-3">
+                      <h3 className="text-[15px] font-bold tracking-tight">{c.name}</h3>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-foreground-muted">
+                        {c.source_episode_id
+                          ? `From Import`
+                          : "Added manually"}
                         {c.role ? (
-                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+                          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
                             {c.role}
                           </span>
                         ) : null}
                       </div>
                       {c.wardrobe_notes ? (
-                        <p className="mt-2 text-[13px] italic text-muted-foreground">{c.wardrobe_notes}</p>
+                        <p className="mt-1.5 text-[12px] text-foreground-muted line-clamp-2">{c.wardrobe_notes}</p>
                       ) : null}
                     </div>
 
-                    <div className="mt-5 rounded-2xl border border-border bg-surface-sunken p-4">
-                      <div className="mb-3 flex items-center justify-between">
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                          Voice
-                        </div>
-                        <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
-                          <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                    <div className="mt-4 rounded-lg border border-border bg-canvas p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="label-eyebrow text-foreground-muted">Voice</span>
+                        <span className={`text-[10px] font-semibold ${vstat === "Pending" ? "text-foreground-muted" : "text-primary"}`}>
                           {vstat}
                         </span>
                       </div>
 
                       {c.default_voice_id ? (
                         <>
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-2.5">
                             <button
                               type="button"
-                              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-teal text-primary-foreground shadow-glow transition-transform hover:scale-105 active:scale-95 disabled:opacity-60"
+                              className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-foreground text-background transition-transform hover:scale-105 active:scale-95 disabled:opacity-60"
                               disabled={previewLoadingId === c.id}
                               onClick={() => void playCurrentVoice(c)}
                               aria-label={`Play ${c.name} voice`}
                             >
                               {previewLoadingId === c.id ? (
-                                <Spinner className="h-4 w-4 border-t-primary-foreground" />
+                                <Spinner className="size-3.5 border-t-background" />
                               ) : (
-                                <Play className="h-4 w-4 fill-current" />
+                                <Play className="size-3.5 fill-current ml-0.5" />
                               )}
                             </button>
                             <div className="min-w-0 flex-1">
-                              <div className="truncate text-sm font-semibold text-foreground">
+                              <div className="truncate text-[13px] font-semibold">
                                 {c.voice_display_name || c.default_voice_id}
                               </div>
                               <VoiceWave
-                                className="mt-1.5"
+                                className="mt-1"
                                 active={voicePreviewPlayingId === c.id}
                               />
                             </div>
                           </div>
 
-                          <div className="mt-3 flex flex-wrap gap-2">
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
                             <Link
                               href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=voice&tab=browse`}
-                              className={buttonClass(
-                                "outline",
-                                "flex min-w-[120px] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs",
-                              )}
+                              className="flex-1 text-center rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold text-foreground hover:bg-canvas transition-colors"
                             >
-                              <Repeat className="h-3 w-3" />
                               Change voice
                             </Link>
-                            <Button
+                            <button
                               type="button"
-                              variant="secondary"
-                              className="flex min-w-[120px] flex-1 items-center justify-center gap-1.5 !px-3 !py-2 !text-xs"
+                              className="flex-1 text-center rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold text-foreground hover:bg-canvas transition-colors"
                               onClick={() => void detachVoice(c)}
                             >
                               Remove voice
-                            </Button>
-                            <Link
-                              href="/voice-studio"
-                              className={buttonClass(
-                                "outline",
-                                "flex min-w-[120px] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs",
-                              )}
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                              Voice Studio
-                            </Link>
-                            <Link
-                              href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=clips`}
-                              className={buttonClass(
-                                "outline",
-                                "flex min-w-[120px] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs",
-                              )}
-                            >
-                              <Sparkles className="h-3 w-3" />
-                              Generate clips
-                            </Link>
-                            {c.source_episode_id || c.segment_count > 0 ? (
-                              <Link
-                                href={
-                                  c.source_episode_id
-                                    ? `/replace-lines?episode=${encodeURIComponent(c.source_episode_id)}`
-                                    : "/replace-lines"
-                                }
-                                className={buttonClass(
-                                  "outline",
-                                  "flex min-w-[120px] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs",
-                                )}
-                              >
-                                <Quote className="h-3 w-3" />
-                                Replace lines
-                              </Link>
-                            ) : null}
+                            </button>
                           </div>
                         </>
                       ) : (
-                        <div className="space-y-3">
-                          <p className="text-xs text-muted-foreground">
-                            No voice attached yet. This character is on the roster
-                            but still needs a voice.
+                        <div className="space-y-2">
+                          <p className="text-[12px] text-foreground-muted">
+                            No voice attached yet.
                           </p>
                           <Link
                             href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=voice&focus=attach`}
-                            className="group inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-teal px-4 text-sm font-semibold text-primary-foreground shadow-glow transition hover:opacity-95"
+                            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-foreground px-3 text-[13px] font-semibold text-background transition-colors hover:bg-foreground/90"
                           >
-                            <Mic2 className="h-4 w-4" />
+                            <Mic2 className="size-3.5" />
                             Attach a voice
-                          </Link>
-                          <Link
-                            href={`/voice-studio?character=${encodeURIComponent(c.id)}&panel=voice&focus=attach`}
-                            className="block text-center text-[11px] font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                          >
-                            Open in Voice Studio
                           </Link>
                         </div>
                       )}
                     </div>
 
-                    <div className="mt-4 flex items-center justify-between text-xs">
+                    <div className="mt-3 flex items-center justify-between">
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1.5 font-semibold text-muted-foreground transition-colors hover:text-foreground"
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground-muted transition-colors hover:text-foreground"
                         onClick={() => {
                           setAvatarTargetId(c.id);
                           fileRef.current?.click();
                         }}
                       >
-                        <Camera className="h-3.5 w-3.5" />
+                        <Camera className="size-3" />
                         Change photo
                       </button>
                       {c.sample_texts.length > 0 ? (
-                        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                          {Math.min(c.sample_texts.length, 4)} import lines
+                        <span className="text-[10px] text-foreground-muted">
+                          {Math.min(c.sample_texts.length, 4)} lines
                         </span>
                       ) : null}
                     </div>
 
-                    <div className="mt-3 space-y-2 border-t border-border pt-4">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        Import transcript (source lines from footage)
-                      </p>
-                      {c.sample_texts.length > 0 ? (
-                        c.sample_texts.slice(0, 4).map((line, i) => (
+                    {c.sample_texts.length > 0 ? (
+                      <div className="mt-2.5 space-y-1.5 border-t border-border pt-3">
+                        <span className="label-eyebrow text-foreground-muted">Sample lines</span>
+                        {c.sample_texts.slice(0, 3).map((line, i) => (
                           <div
                             key={i}
-                            className="flex gap-2 rounded-xl bg-surface-sunken/60 px-3 py-2"
+                            className="flex gap-1.5 rounded-md bg-canvas px-2.5 py-1.5"
                           >
-                            <Quote className="h-3 w-3 shrink-0 text-primary" />
-                            <p className="text-[12px] italic leading-relaxed text-muted-foreground">
+                            <Quote className="size-3 shrink-0 text-primary mt-0.5" />
+                            <p className="text-[11.5px] leading-relaxed text-foreground-muted line-clamp-2">
                               {line}
                             </p>
                           </div>
-                        ))
-                      ) : (
-                        <p className="text-[12px] text-muted-foreground">
-                          {c.source_episode_id
-                            ? "No lines matched this character on the import yet."
-                            : "Manual characters only show import lines after you link them to footage, or use Voice Studio for spoken clips."}
-                        </p>
-                      )}
-                    </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 </article>
               );
@@ -861,9 +761,8 @@ export default function CharactersPage() {
         </p>
       </ConfirmModal>
 
-      <footer className="mt-16 border-t border-border pt-6 text-center text-[11px] text-muted-foreground">
-        CastWeave Â· Video to cast, voice, and lines.
-      </footer>
+        </div>
+      </div>
     </div>
   );
 }

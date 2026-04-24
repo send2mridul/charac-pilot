@@ -20,6 +20,7 @@ from db.records import (
     ReplacementRecord,
     SpeakerGroupRecord,
     TranscriptSegmentRecord,
+    UserVoiceRecord,
     VoiceClipRecord,
     _now_iso,
 )
@@ -283,6 +284,60 @@ class SqliteStore:
                 except sqlite3.OperationalError:
                     pass
 
+        # --- episodes: media_type column ---
+        cur = self._cx.execute("PRAGMA table_info(episodes)")
+        ecols = {row[1] for row in cur.fetchall()}
+        if "media_type" not in ecols:
+            try:
+                self._cx.execute(
+                    "ALTER TABLE episodes ADD COLUMN media_type TEXT DEFAULT 'video'",
+                )
+                self._cx.commit()
+            except sqlite3.OperationalError:
+                pass
+
+        # --- replacements: multi-take columns ---
+        cur = self._cx.execute("PRAGMA table_info(replacements)")
+        rcols = {row[1] for row in cur.fetchall()}
+        for col_name, col_typ in (
+            ("take_number", "INTEGER DEFAULT 1"),
+            ("is_active_take", "INTEGER DEFAULT 1"),
+            ("delivery_preset", "TEXT DEFAULT 'neutral'"),
+        ):
+            if col_name not in rcols:
+                try:
+                    self._cx.execute(
+                        f"ALTER TABLE replacements ADD COLUMN {col_name} {col_typ}",
+                    )
+                    self._cx.commit()
+                except sqlite3.OperationalError:
+                    pass
+
+        # --- user_voices table ---
+        cur = self._cx.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='user_voices'",
+        )
+        if cur.fetchone() is None:
+            try:
+                self._cx.executescript(
+                    """
+                    CREATE TABLE user_voices (
+                      id TEXT PRIMARY KEY,
+                      name TEXT NOT NULL,
+                      elevenlabs_voice_id TEXT,
+                      source_type TEXT NOT NULL,
+                      sample_audio_path TEXT,
+                      rights_type TEXT NOT NULL,
+                      rights_note TEXT NOT NULL DEFAULT '',
+                      preview_audio_path TEXT,
+                      created_at TEXT NOT NULL
+                    );
+                    """,
+                )
+                self._cx.commit()
+            except sqlite3.OperationalError:
+                pass
+
     def renormalize_hindi_display_text(self) -> None:
         """Re-derive display text for Hindi segments that have text_original.
 
@@ -434,6 +489,7 @@ class SqliteStore:
 
     def _row_episode(self, r: sqlite3.Row) -> EpisodeRecord:
         thumbs = _jl(r["thumbnail_rels_json"], [])
+        keys = r.keys() if hasattr(r, "keys") else []
         return EpisodeRecord(
             id=r["id"],
             project_id=r["project_id"],
@@ -446,6 +502,7 @@ class SqliteStore:
             thumbnail_rels=[str(x) for x in thumbs],
             duration_sec=float(r["duration_sec"]) if r["duration_sec"] is not None else None,
             transcript_language=r["transcript_language"],
+            media_type=r["media_type"] if "media_type" in keys else "video",
         )
 
     def _row_character(self, r: sqlite3.Row) -> CharacterRecord:
@@ -525,6 +582,7 @@ class SqliteStore:
         )
 
     def _row_replacement(self, r: sqlite3.Row) -> ReplacementRecord:
+        keys = r.keys() if hasattr(r, "keys") else []
         return ReplacementRecord(
             replacement_id=r["replacement_id"],
             episode_id=r["episode_id"],
@@ -541,6 +599,9 @@ class SqliteStore:
             fallback_used=bool(r["fallback_used"]),
             created_at=r["created_at"],
             updated_at=r["updated_at"],
+            take_number=int(r["take_number"]) if "take_number" in keys and r["take_number"] is not None else 1,
+            is_active_take=int(r["is_active_take"]) if "is_active_take" in keys and r["is_active_take"] is not None else 1,
+            delivery_preset=r["delivery_preset"] if "delivery_preset" in keys and r["delivery_preset"] else "neutral",
         )
 
     def _row_job(self, r: sqlite3.Row) -> JobRecord:
@@ -1062,8 +1123,8 @@ class SqliteStore:
                   replacement_id, episode_id, segment_id, character_id, character_name,
                   selected_voice_id, selected_voice_name, original_text, replacement_text,
                   tone_style, generated_audio_path, provider_used, fallback_used,
-                  created_at, updated_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                  created_at, updated_at, take_number, is_active_take, delivery_preset
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     rec.replacement_id,
                     rec.episode_id,
@@ -1080,6 +1141,9 @@ class SqliteStore:
                     1 if rec.fallback_used else 0,
                     rec.created_at,
                     rec.updated_at,
+                    rec.take_number,
+                    rec.is_active_take,
+                    rec.delivery_preset,
                 ),
             )
             self._cx.commit()
@@ -1675,7 +1739,7 @@ class SqliteStore:
                 """UPDATE episodes SET
                   project_id=?, title=?, status=?, segment_count=?, updated_at=?,
                   source_video_rel=?, extracted_audio_rel=?, thumbnail_rels_json=?,
-                  duration_sec=?, transcript_language=?
+                  duration_sec=?, transcript_language=?, media_type=?
                   WHERE id=?""",
                 (
                     ep.project_id,
@@ -1688,6 +1752,7 @@ class SqliteStore:
                     _j(ep.thumbnail_rels),
                     ep.duration_sec,
                     ep.transcript_language,
+                    ep.media_type,
                     episode_id,
                 ),
             )
@@ -1705,6 +1770,7 @@ class SqliteStore:
         project_id: str,
         title: str,
         status: str = "processing",
+        media_type: str = "video",
     ) -> EpisodeRecord:
         eid = f"ep-{uuid.uuid4().hex[:10]}"
         ts = _now_iso()
@@ -1715,13 +1781,15 @@ class SqliteStore:
             status=status,
             segment_count=0,
             updated_at=ts,
+            media_type=media_type,
         )
         with self._lock:
             self._cx.execute(
                 """INSERT INTO episodes (
                   id, project_id, title, status, segment_count, updated_at,
-                  source_video_rel, extracted_audio_rel, thumbnail_rels_json, duration_sec, transcript_language
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                  source_video_rel, extracted_audio_rel, thumbnail_rels_json, duration_sec,
+                  transcript_language, media_type
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     rec.id,
                     rec.project_id,
@@ -1734,6 +1802,7 @@ class SqliteStore:
                     _j([]),
                     None,
                     None,
+                    rec.media_type,
                 ),
             )
             self._cx.commit()
@@ -1786,3 +1855,128 @@ class SqliteStore:
             )
             self._cx.commit()
         return job
+
+    # ── user_voices CRUD ──────────────────────────────────────────────
+
+    def create_user_voice(
+        self,
+        *,
+        voice_id: str,
+        name: str,
+        elevenlabs_voice_id: str | None,
+        source_type: str,
+        sample_audio_path: str | None,
+        rights_type: str,
+        rights_note: str = "",
+        preview_audio_path: str | None = None,
+    ) -> UserVoiceRecord:
+        ts = _now_iso()
+        rec = UserVoiceRecord(
+            id=voice_id,
+            name=name,
+            elevenlabs_voice_id=elevenlabs_voice_id,
+            source_type=source_type,
+            sample_audio_path=sample_audio_path,
+            rights_type=rights_type,
+            rights_note=rights_note,
+            preview_audio_path=preview_audio_path,
+            created_at=ts,
+        )
+        with self._lock:
+            self._cx.execute(
+                """INSERT INTO user_voices
+                  (id, name, elevenlabs_voice_id, source_type, sample_audio_path,
+                   rights_type, rights_note, preview_audio_path, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    rec.id, rec.name, rec.elevenlabs_voice_id, rec.source_type,
+                    rec.sample_audio_path, rec.rights_type, rec.rights_note,
+                    rec.preview_audio_path, rec.created_at,
+                ),
+            )
+            self._cx.commit()
+        return rec
+
+    def list_user_voices(self) -> list[UserVoiceRecord]:
+        with self._lock:
+            cur = self._cx.execute(
+                "SELECT * FROM user_voices ORDER BY created_at DESC",
+            )
+            rows = cur.fetchall()
+        return [self._row_user_voice(r) for r in rows]
+
+    def get_user_voice(self, voice_id: str) -> UserVoiceRecord | None:
+        with self._lock:
+            cur = self._cx.execute("SELECT * FROM user_voices WHERE id = ?", (voice_id,))
+            r = cur.fetchone()
+        return self._row_user_voice(r) if r else None
+
+    def delete_user_voice(self, voice_id: str) -> UserVoiceRecord | None:
+        with self._lock:
+            cur = self._cx.execute("SELECT * FROM user_voices WHERE id = ?", (voice_id,))
+            r = cur.fetchone()
+            if not r:
+                return None
+            rec = self._row_user_voice(r)
+            self._cx.execute("DELETE FROM user_voices WHERE id = ?", (voice_id,))
+            self._cx.commit()
+        return rec
+
+    def _row_user_voice(self, r: sqlite3.Row) -> UserVoiceRecord:
+        return UserVoiceRecord(
+            id=r["id"],
+            name=r["name"],
+            elevenlabs_voice_id=r["elevenlabs_voice_id"],
+            source_type=r["source_type"],
+            sample_audio_path=r["sample_audio_path"],
+            rights_type=r["rights_type"],
+            rights_note=r["rights_note"] or "",
+            preview_audio_path=r["preview_audio_path"],
+            created_at=r["created_at"],
+        )
+
+    # ── multi-take helpers ────────────────────────────────────────────
+
+    def deactivate_takes_for_segment(
+        self, episode_id: str, segment_id: str, character_id: str,
+    ) -> None:
+        with self._lock:
+            self._cx.execute(
+                """UPDATE replacements SET is_active_take = 0
+                   WHERE episode_id = ? AND segment_id = ? AND character_id = ?""",
+                (episode_id, segment_id, character_id),
+            )
+            self._cx.commit()
+
+    def set_active_take(self, episode_id: str, replacement_id: str) -> ReplacementRecord | None:
+        with self._lock:
+            cur = self._cx.execute(
+                "SELECT * FROM replacements WHERE replacement_id = ? AND episode_id = ?",
+                (replacement_id, episode_id),
+            )
+            r = cur.fetchone()
+            if not r:
+                return None
+            rec = self._row_replacement(r)
+            self._cx.execute(
+                """UPDATE replacements SET is_active_take = 0
+                   WHERE episode_id = ? AND segment_id = ? AND character_id = ?""",
+                (rec.episode_id, rec.segment_id, rec.character_id),
+            )
+            self._cx.execute(
+                "UPDATE replacements SET is_active_take = 1 WHERE replacement_id = ?",
+                (replacement_id,),
+            )
+            self._cx.commit()
+            rec.is_active_take = 1
+        return rec
+
+    def next_take_number(self, episode_id: str, segment_id: str, character_id: str) -> int:
+        with self._lock:
+            cur = self._cx.execute(
+                """SELECT COALESCE(MAX(take_number), 0) FROM replacements
+                   WHERE episode_id = ? AND segment_id = ? AND character_id = ?""",
+                (episode_id, segment_id, character_id),
+            )
+            r = cur.fetchone()
+        return (int(r[0]) if r else 0) + 1

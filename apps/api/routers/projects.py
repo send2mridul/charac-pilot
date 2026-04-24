@@ -37,6 +37,8 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
+_AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".wma"}
+_MEDIA_SUFFIXES = _VIDEO_SUFFIXES | _AUDIO_SUFFIXES
 
 
 @router.get("", response_model=list[ProjectOut])
@@ -125,16 +127,17 @@ async def upload_episode(project_id: str, file: UploadFile = File(...)):
 
     orig = Path(file.filename)
     suffix = orig.suffix.lower()
-    if suffix not in _VIDEO_SUFFIXES:
+    if suffix not in _MEDIA_SUFFIXES:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported video type ({suffix or 'none'}). "
-            f"Allowed: {', '.join(sorted(_VIDEO_SUFFIXES))}",
+            detail=f"Unsupported file type ({suffix or 'none'}). "
+            f"Allowed: {', '.join(sorted(_MEDIA_SUFFIXES))}",
         )
 
+    media_type = "audio" if suffix in _AUDIO_SUFFIXES else "video"
     ensure_storage_dirs()
     title = orig.stem or "Uploaded episode"
-    ep = episode_service.create_upload_episode(project_id, title)
+    ep = episode_service.create_upload_episode(project_id, title, media_type=media_type)
     episode_id = ep.id
 
     episode_dir = UPLOADS_ROOT / project_id / episode_id

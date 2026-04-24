@@ -4,12 +4,23 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowRight,
+  AlertCircle,
   Check,
-  Circle,
-  Clapperboard,
-  Pencil,
+  CheckCircle2,
+  ChevronDown,
+  Clock,
+  Download,
+  Folder,
+  Mic2,
+  MoreHorizontal,
+  Play,
+  Plus,
+  Search,
+  Sparkles,
   Trash2,
-  Volume2,
+  Video,
+  Copy,
   X,
 } from "lucide-react";
 import { api } from "@/lib/api/client";
@@ -28,21 +39,19 @@ import {
   playVoicePreview,
   stopVoicePreview,
 } from "@/lib/audio/voicePreviewPlayer";
-import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
-import { buttonClass } from "@/components/ui/buttonStyles";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
-import { ErrorBanner } from "@/components/ui/ErrorBanner";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Panel } from "@/components/ui/Panel";
-import { Spinner } from "@/components/ui/Spinner";
 
-/** Same output on server and client (avoids hydration mismatch from toLocaleString). */
 function formatUpdated(iso: string) {
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
-    return `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+    const now = Date.now();
+    const diff = now - d.getTime();
+    if (diff < 60_000) return "Just now";
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    if (diff < 172_800_000) return "Yesterday";
+    return `${Math.floor(diff / 86_400_000)} days ago`;
   } catch {
     return iso;
   }
@@ -60,7 +69,7 @@ export function ProjectDetailView({
   initialCharacters,
 }: Props) {
   const router = useRouter();
-  const { refresh, setActiveProjectId } = useProjects();
+  const { refresh, setActiveProjectId, projects } = useProjects();
   const toast = useToast();
   const [project, setProject] = useState(initialProject);
   const episodes = initialEpisodes;
@@ -83,718 +92,369 @@ export function ProjectDetailView({
 
   useEffect(() => {
     let cancelled = false;
-    void api
-      .listProjectReplacements(project.id)
-      .then((rows) => {
-        if (!cancelled) setReplacements(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setReplacements([]);
-      });
-    return () => {
-      cancelled = true;
-    };
+    void api.listProjectReplacements(project.id).then((rows) => {
+      if (!cancelled) setReplacements(rows);
+    }).catch(() => { if (!cancelled) setReplacements([]); });
+    return () => { cancelled = true; };
   }, [project.id]);
 
   useEffect(() => {
     let cancelled = false;
-    void api
-      .listProjectClips(project.id)
-      .then((rows) => {
-        if (!cancelled) setVoiceClips(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setVoiceClips([]);
-      });
-    return () => {
-      cancelled = true;
-    };
+    void api.listProjectClips(project.id).then((rows) => {
+      if (!cancelled) setVoiceClips(rows);
+    }).catch(() => { if (!cancelled) setVoiceClips([]); });
+    return () => { cancelled = true; };
   }, [project.id]);
 
   const charCount = characters.length;
   const voiced = characters.filter((c) => c.default_voice_id).length;
   const importedEpisodes = episodes.filter((e) => e.segment_count > 0).length;
-  const hasSegments = episodes.some((e) => e.segment_count > 0);
-  const hasImportedTranscript = importedEpisodes > 0;
   const replacementCount = replacements.length;
+  const linesWithAudio = replacements.filter((r) => r.generated_audio_path).length;
   const transcriptLineTotal = episodes.reduce((acc, e) => acc + (e.segment_count ?? 0), 0);
   const clipCount = voiceClips.length;
+  const videoEpisodes = episodes.filter((e) => (e.media_type ?? "video") === "video").length;
+  const audioEpisodes = episodes.filter((e) => e.media_type === "audio").length;
+
   const sortedEpisodes = useMemo(
-    () =>
-      [...episodes].sort(
-        (a, b) =>
-          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-      ),
+    () => [...episodes].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
     [episodes],
   );
   const recentReplacements = useMemo(
-    () =>
-      [...replacements]
-        .sort(
-          (a, b) =>
-            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-        )
-        .slice(0, 8),
+    () => [...replacements].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()).slice(0, 5),
     [replacements],
   );
-  const hasReplacementReady = voiced > 0 && hasSegments;
-  const workflowStarted = hasImportedTranscript || charCount > 0;
-  const replaceStepDone =
-    replacementCount > 0 ||
-    (!hasImportedTranscript && voiced > 0 && charCount > 0);
+  const mostRecentEpisode = sortedEpisodes[0];
 
-  const checklist = useMemo(
-    () => [
-      {
-        id: "start",
-        label: "Start: import video or add a character",
-        done: workflowStarted,
-        href: "/upload-match",
-      },
-      {
-        id: "cast",
-        label: "Characters: confirm your project roster",
-        done: charCount > 0,
-        href: "/characters",
-      },
-      {
-        id: "voice",
-        label: "Voice Studio: attach or design voices",
-        done: voiced > 0,
-        href: "/voice-studio",
-      },
-      {
-        id: "replace",
-        label:
-          "Replace Lines (optional): advanced history, bulk tools, and precision edits",
-        done: replaceStepDone,
-        href: "/replace-lines",
-      },
-    ],
-    [workflowStarted, charCount, voiced, replaceStepDone],
-  );
-
-  const nextItem = checklist.find((c) => !c.done);
-
-  const nextSummary = useMemo(() => {
-    if (!nextItem) {
-      return {
-        title: "Core workflow is in good shape",
-        body: "Keep refining voices, clips, and line audio from here.",
-      };
-    }
-    if (nextItem.id === "start") {
-      return {
-        title: "Pick how you want to begin",
-        body:
-          "Import video to get transcript lines and detected cast, or add characters manually and go straight to Voice Studio.",
-      };
-    }
-    if (nextItem.id === "cast") {
-      return {
-        title: "Add people to your roster",
-        body:
-          "Detected cast from video are candidates only. Confirm them as Characters, or add roles manually.",
-      };
-    }
-    if (nextItem.id === "voice") {
-      return {
-        title: "Give your roster voices",
-        body:
-          charCount === 0
-            ? "Add at least one character, then attach or design a voice in Voice Studio."
-            : `${Math.max(0, charCount - voiced)} character(s) still need a voice.`,
-      };
-    }
-    return {
-      title: "Line audio and rewrites",
-      body: hasImportedTranscript
-        ? "Use Import from Video as the main line editor (save text, generate audio). Replace Lines adds history, bulk tools, and deep edits."
-        : "Replace Lines opens when you have an import with transcript lines. For manual projects, Voice Studio clips are your main line audio.",
-    };
-  }, [nextItem, charCount, voiced, hasImportedTranscript]);
+  const blockedLines = characters.filter((c) => !c.default_voice_id).reduce((acc, c) => {
+    const ep = episodes.find((e) => e.segment_count > 0);
+    return acc + (ep ? Math.max(0, Math.floor(ep.segment_count / charCount)) : 0);
+  }, 0);
+  const needsVoiceChar = characters.find((c) => !c.default_voice_id);
 
   async function saveProject() {
-    setSaving(true);
-    setErr(null);
+    setSaving(true); setErr(null);
     try {
-      const p = await api.patchProject(project.id, {
-        name: editName.trim(),
-        description: editDesc.trim(),
-      });
-      setProject(p);
-      setEditOpen(false);
-      await refresh();
-      toast("Project saved");
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Could not save");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function removeEpisodeImport(ep: EpisodeDto) {
-    setConfirmRemoveEp(ep);
+      const p = await api.patchProject(project.id, { name: editName.trim(), description: editDesc.trim() });
+      setProject(p); setEditOpen(false); await refresh(); toast("Project saved");
+    } catch (e) { setErr(e instanceof ApiError ? e.message : "Could not save"); }
+    finally { setSaving(false); }
   }
 
   async function executeRemoveEpisodeImport() {
-    const ep = confirmRemoveEp;
-    if (!ep) return;
-    setConfirmRemoveEp(null);
-    setErr(null);
-    try {
-      await api.deleteEpisode(ep.id);
-      toast("Import removed from this project");
-      router.refresh();
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Could not remove import");
-    }
-  }
-
-  function removeProject() {
-    setConfirmDeleteProject(true);
+    const ep = confirmRemoveEp; if (!ep) return; setConfirmRemoveEp(null); setErr(null);
+    try { await api.deleteEpisode(ep.id); toast("Import removed"); router.refresh(); }
+    catch (e) { setErr(e instanceof ApiError ? e.message : "Could not remove"); }
   }
 
   async function executeRemoveProject() {
-    setConfirmDeleteProject(false);
-    setDeleting(true);
-    setErr(null);
-    try {
-      await api.deleteProject(project.id);
-      await refresh();
-      router.push("/projects");
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Could not delete");
-    } finally {
-      setDeleting(false);
-    }
+    setConfirmDeleteProject(false); setDeleting(true); setErr(null);
+    try { await api.deleteProject(project.id); await refresh(); router.push("/projects"); }
+    catch (e) { setErr(e instanceof ApiError ? e.message : "Could not delete"); }
+    finally { setDeleting(false); }
   }
 
+  const charColors = ["bg-emerald-100 text-emerald-700", "bg-amber-100 text-amber-700", "bg-sky-100 text-sky-700", "bg-violet-100 text-violet-700", "bg-rose-100 text-rose-700", "bg-indigo-100 text-indigo-700"];
+
   return (
-    <div className="space-y-10">
-      <Link
-        href="/projects"
-        className={buttonClass("ghost", "inline-flex w-fit justify-start px-2")}
-      >
-        <span className="text-base leading-none" aria-hidden>
-          ←
-        </span>
-        All projects
-      </Link>
+    <>
+      {/* Page header */}
+      <header className="h-16 shrink-0 bg-surface border-b border-border flex items-center px-10 gap-6">
+        <nav className="flex items-center gap-2.5 text-sm">
+          <Link href="/projects" className="text-foreground-muted font-medium hover:text-foreground transition-colors">Projects</Link>
+          <span className="text-border">/</span>
+          <span className="px-2.5 py-1 rounded-md bg-canvas border border-border text-foreground font-semibold text-[13px]">
+            {project.name}
+          </span>
+        </nav>
+        <div className="flex-1" />
+        <div className="relative">
+          <Search className="size-3.5 text-foreground-subtle absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <input placeholder="Search this project" className="h-9 pl-8 pr-3 w-72 text-[13px] bg-canvas border border-border rounded-md focus:outline-none focus:border-border-strong" />
+        </div>
+        <Link href="/upload-match" className="h-9 px-4 rounded-md text-sm font-semibold bg-foreground text-surface hover:bg-foreground/90 transition-colors flex items-center gap-2 shadow-sm">
+          <Plus className="size-4" /> New import
+        </Link>
+      </header>
 
-      <PageHeader
-        title={project.name}
-        subtitle={
-          (project.description || "").trim()
-            ? `${(project.description || "").trim()} · Updated ${formatUpdated(project.updated_at)}`
-            : `Updated ${formatUpdated(project.updated_at)}`
-        }
-        actions={
-          <>
-            <Badge tone="success">{project.status}</Badge>
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={() => {
-                setEditName(project.name);
-                setEditDesc(project.description ?? "");
-                setEditOpen(true);
-              }}
-            >
-              <Pencil className="h-4 w-4" />
-              Edit project
-            </Button>
-            <Button
-              variant="secondary"
-              type="button"
-              disabled={deleting}
-              onClick={() => void removeProject()}
-            >
-              {deleting ? (
-                <Spinner className="h-4 w-4 border-t-text" />
+      <main className="flex-1 overflow-y-auto">
+        <div className="px-10 py-10 max-w-[1640px] mx-auto">
+          {/* Hero */}
+          <div className="flex items-end justify-between gap-8 mb-10 pb-8 border-b border-border">
+            <div className="min-w-0">
+              <div className="label-section mb-3">Project</div>
+              {editOpen ? (
+                <div className="space-y-3 max-w-lg">
+                  <input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-12 w-full px-4 text-[24px] font-bold bg-canvas border border-border rounded-lg focus:outline-none focus:border-border-strong" />
+                  <textarea value={editDesc} onChange={(e) => setEditDesc(e.target.value)} rows={2} className="w-full px-4 py-2 text-[14px] bg-canvas border border-border rounded-lg focus:outline-none focus:border-border-strong resize-none" />
+                  <div className="flex gap-2">
+                    <button onClick={saveProject} disabled={saving} className="h-9 px-4 rounded-md text-[13px] font-bold bg-foreground text-surface hover:bg-foreground/90 disabled:opacity-50">{saving ? "Saving..." : "Save"}</button>
+                    <button onClick={() => { setEditOpen(false); setEditName(project.name); setEditDesc(project.description ?? ""); }} className="h-9 px-4 rounded-md text-[13px] font-semibold text-foreground-muted hover:text-foreground">Cancel</button>
+                  </div>
+                  {err && <p className="text-[12px] text-danger">{err}</p>}
+                </div>
               ) : (
-                <Trash2 className="h-4 w-4" />
+                <>
+                  <h1 className="text-[44px] font-bold tracking-tight leading-[1.05]">{project.name}</h1>
+                  <p className="text-[15px] text-foreground-muted mt-3 max-w-2xl leading-relaxed">
+                    {project.description || `${episodes.length} episode${episodes.length !== 1 ? "s" : ""}. ${charCount} character${charCount !== 1 ? "s" : ""} cast, ${voiced} voice${voiced !== 1 ? "s" : ""} attached. Last activity ${formatUpdated(project.updated_at)}.`}
+                  </p>
+                  <div className="flex items-center gap-6 mt-5 text-[12.5px]">
+                    <div className="flex items-center gap-2">
+                      <span className="size-2 rounded-full bg-success" />
+                      <span className="text-foreground-muted">Generated</span>
+                      <span className="font-bold num">{linesWithAudio}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="size-2 rounded-full bg-accent" />
+                      <span className="text-foreground-muted">Ready</span>
+                      <span className="font-bold num">{transcriptLineTotal - linesWithAudio - blockedLines}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="size-2 rounded-full bg-warning" />
+                      <span className="text-foreground-muted">Blocked</span>
+                      <span className="font-bold num">{blockedLines}</span>
+                    </div>
+                  </div>
+                </>
               )}
-              Delete
-            </Button>
-          </>
-        }
-      />
-
-      {err ? <ErrorBanner title="Project" detail={err} /> : null}
-
-      <Panel>
-        <h2 className="text-sm font-semibold text-text">Choose a path</h2>
-        <p className="mt-1 text-sm text-muted">
-          Import video to get transcript lines and detected cast candidates, or build your roster by hand and go straight to voices and clips.
-        </p>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <Link
-            href="/upload-match"
-            className="rounded-xl bg-white/[0.04] p-4 ring-1 ring-white/[0.08] transition hover:bg-white/[0.06] hover:ring-accent/30"
-            onClick={() => setActiveProjectId(project.id)}
-          >
-            <p className="text-xs font-semibold uppercase tracking-wide text-accent">
-              Video first
-            </p>
-            <p className="mt-2 text-base font-semibold text-text">Import from Video</p>
-            <p className="mt-1 text-sm text-muted">
-              Transcript, detected cast, thumbnails. Analysis saves to this project when it finishes.
-            </p>
-          </Link>
-          <Link
-            href="/characters"
-            className="rounded-xl bg-white/[0.04] p-4 ring-1 ring-white/[0.08] transition hover:bg-white/[0.06] hover:ring-accent/30"
-            onClick={() => setActiveProjectId(project.id)}
-          >
-            <p className="text-xs font-semibold uppercase tracking-wide text-accent">
-              No video yet
-            </p>
-            <p className="mt-2 text-base font-semibold text-text">Add Character Manually</p>
-            <p className="mt-1 text-sm text-muted">
-              Create your roster, then open Voice Studio to attach or design voices and generate clips.
-            </p>
-          </Link>
-        </div>
-      </Panel>
-
-      {nextItem ? (
-        <div className="rounded-2xl border border-accent/30 bg-accent/10 px-5 py-4 ring-1 ring-accent/20">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent">
-            Next step
-          </p>
-          <p className="mt-1 text-base font-semibold text-text">{nextSummary.title}</p>
-          <p className="mt-1 text-sm text-muted">{nextSummary.body}</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link
-              href={nextItem.href}
-              className={buttonClass("primary", "inline-flex px-4")}
-              onClick={() => setActiveProjectId(project.id)}
-            >
-              {nextItem.id === "start"
-                ? "Open Import from Video"
-                : nextItem.label}
-            </Link>
-            {nextItem.id === "start" ? (
-              <Link
-                href="/characters"
-                className={buttonClass("secondary", "inline-flex px-4")}
-                onClick={() => setActiveProjectId(project.id)}
-              >
-                Add Character Manually
-              </Link>
-            ) : null}
-          </div>
-        </div>
-      ) : (
-        <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-5 py-4 ring-1 ring-emerald-500/20">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-400/90">
-            On track
-          </p>
-          <p className="mt-1 text-base font-semibold text-text">{nextSummary.title}</p>
-          <p className="mt-1 text-sm text-muted">{nextSummary.body}</p>
-        </div>
-      )}
-
-      {editOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="edit-project-title"
-        >
-          <div className="relative w-full max-w-md rounded-2xl border border-white/[0.1] bg-panel p-6 ring-1 ring-white/10">
-            <button
-              type="button"
-              className="absolute right-4 top-4 rounded-lg p-1 text-muted transition hover:bg-white/[0.06] hover:text-text"
-              onClick={() => setEditOpen(false)}
-              aria-label="Close"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <h2 id="edit-project-title" className="text-lg font-semibold text-text">
-              Edit project
-            </h2>
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="text-[11px] font-medium text-muted">Name</label>
-                <input
-                  className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-[11px] font-medium text-muted">
-                  Description (optional)
-                </label>
-                <textarea
-                  className="mt-1 w-full rounded-lg border border-white/[0.12] bg-canvas/80 px-3 py-2 text-sm text-text outline-none transition focus:border-accent/40"
-                  rows={3}
-                  value={editDesc}
-                  onChange={(e) => setEditDesc(e.target.value)}
-                  placeholder="What is this production about?"
-                />
-              </div>
             </div>
-            <div className="mt-6 flex flex-wrap justify-end gap-2">
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() => setEditOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                disabled={saving || !editName.trim()}
-                onClick={() => void saveProject()}
-              >
-                {saving ? <Spinner className="h-4 w-4 border-t-canvas" /> : null}
-                Save
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      <Panel>
-        <h2 className="text-sm font-semibold text-text">Production checklist</h2>
-        <p className="mt-1 text-sm text-muted">
-          Detected cast and transcript lines live on Import from Video. Characters are confirmed roster entries. Voice Studio attaches voices. Replace Lines is an optional advanced tool for bulk work and line history.
-        </p>
-        <ul className="mt-4 space-y-2">
-          {checklist.map((item) => (
-            <li key={item.id}>
-              <Link
-                href={item.href}
-                onClick={() => setActiveProjectId(project.id)}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ring-1 ${
-                  nextItem?.id === item.id
-                    ? "bg-accent/10 ring-accent/35 text-text"
-                    : "bg-white/[0.02] ring-white/[0.06] text-muted hover:bg-white/[0.04]"
-                }`}
-              >
-                {item.done ? (
-                  <Check className="h-4 w-4 shrink-0 text-emerald-400" />
-                ) : (
-                  <Circle className="h-4 w-4 shrink-0 text-muted" />
+            {!editOpen && (
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => setEditOpen(true)} className="h-10 px-3.5 rounded-md text-[13px] font-semibold text-foreground-muted hover:text-foreground bg-surface border border-border hover:border-border-strong transition-colors flex items-center gap-2">
+                  <Folder className="size-4" /> Project settings
+                </button>
+                {mostRecentEpisode && (
+                  <Link href={`/upload-match?episode=${encodeURIComponent(mostRecentEpisode.id)}`} className="h-10 px-4 rounded-md text-[13px] font-bold bg-accent text-white hover:bg-accent-hover transition-colors flex items-center gap-2 shadow-sm">
+                    Resume {mostRecentEpisode.title?.slice(0, 20) || "editing"} <ArrowRight className="size-4" />
+                  </Link>
                 )}
-                <span className={item.done ? "line-through opacity-70" : ""}>
-                  {item.label}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-        {nextItem ? (
-          <p className="mt-4 text-sm text-text">
-            <span className="font-medium">Still to do: </span>
-            <Link
-              href={nextItem.href}
-              className="text-accent underline-offset-4 hover:underline"
-              onClick={() => setActiveProjectId(project.id)}
-            >
-              {nextItem.label}
-            </Link>
-          </p>
-        ) : (
-          <p className="mt-4 text-sm text-emerald-400/90">
-            Core workflow complete. Keep iterating in Import from Video, Voice Studio, and Replace Lines when you need advanced tools.
-          </p>
-        )}
-      </Panel>
+              </div>
+            )}
+          </div>
 
-      <Panel>
-        <h2 className="text-sm font-semibold text-text">Overview</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl bg-white/[0.03] px-4 py-3 ring-1 ring-white/[0.06] transition hover:ring-white/10">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-              Characters
-            </p>
-            <p className="mt-1 text-2xl font-semibold text-text">{charCount}</p>
-          </div>
-          <div className="rounded-xl bg-white/[0.03] px-4 py-3 ring-1 ring-white/[0.06] transition hover:ring-white/10">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-              Voices assigned
-            </p>
-            <p className="mt-1 text-2xl font-semibold text-text">
-              {charCount ? `${voiced}/${charCount}` : "0"}
-            </p>
-          </div>
-          <div className="rounded-xl bg-white/[0.03] px-4 py-3 ring-1 ring-white/[0.06] transition hover:ring-white/10">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-              Imports & transcript
-            </p>
-            <p className="mt-1 text-2xl font-semibold text-text">
-              {importedEpisodes}/{episodes.length}
-            </p>
-            <p className="mt-0.5 text-[10px] text-muted">
-              {transcriptLineTotal} transcript line{transcriptLineTotal === 1 ? "" : "s"} total
-            </p>
-          </div>
-          <div className="rounded-xl bg-white/[0.03] px-4 py-3 ring-1 ring-white/[0.06] transition hover:ring-white/10">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-              Line audio & clips
-            </p>
-            <p className="mt-1 text-sm font-medium text-text">
-              {replacementCount > 0
-                ? `${replacementCount} saved line${replacementCount === 1 ? "" : "s"}`
-                : hasReplacementReady
-                  ? "No saved lines yet"
-                  : "Needs voice + import"}
-            </p>
-            <p className="mt-0.5 text-[10px] text-muted">
-              {clipCount} voice clip{clipCount === 1 ? "" : "s"} in Voice Studio
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-6 flex flex-wrap gap-2">
-          <Link
-            href="/upload-match"
-            className={buttonClass("primary", "px-4")}
-            onClick={() => setActiveProjectId(project.id)}
-          >
-            Import from Video
-          </Link>
-          <Link
-            href="/characters"
-            className={buttonClass("secondary", "px-4")}
-            onClick={() => setActiveProjectId(project.id)}
-          >
-            Characters
-          </Link>
-          <Link
-            href="/voice-studio"
-            className={buttonClass("secondary", "px-4")}
-            onClick={() => setActiveProjectId(project.id)}
-          >
-            Voice Studio
-          </Link>
-          <Link
-            href="/replace-lines"
-            className={
-              hasReplacementReady
-                ? buttonClass("secondary", "px-4")
-                : buttonClass("ghost", "px-4 text-muted-foreground")
-            }
-            onClick={() => setActiveProjectId(project.id)}
-          >
-            Replace Lines
-          </Link>
-        </div>
-      </Panel>
-
-      <Panel>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-text">Saved line takes</h2>
-          <span className="text-xs text-muted">{replacements.length} total</span>
-        </div>
-        <p className="mt-1 text-sm text-muted">
-          Saved line audio from Import from Video or Replace Lines. Open the import workspace to jump straight to a line.
-        </p>
-        {replacements.length === 0 ? (
-          <p className="mt-4 text-sm text-muted">
-            None yet. Open{" "}
-            <Link
-              href="/upload-match"
-              className="font-medium text-accent hover:underline"
-              onClick={() => setActiveProjectId(project.id)}
-            >
-              Import from Video
-            </Link>{" "}
-            to generate from the transcript, or use{" "}
-            <Link
-              href="/replace-lines"
-              className="font-medium text-accent hover:underline"
-              onClick={() => setActiveProjectId(project.id)}
-            >
-              Replace Lines
-            </Link>{" "}
-            for advanced edits.
-          </p>
-        ) : (
-          <ul className="mt-4 divide-y divide-white/[0.06]">
-            {recentReplacements.map((r) => (
-              <li
-                key={r.replacement_id}
-                className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0"
-              >
-                <div className="min-w-0">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted">
-                    {formatUpdated(r.updated_at)}
-                  </p>
-                  <p className="text-sm font-medium text-text">{r.character_name}</p>
-                  {r.original_text ? (
-                    <p className="mt-0.5 line-clamp-1 text-[11px] italic text-muted">
-                      Original: {r.original_text}
-                    </p>
-                  ) : null}
-                  <p className="mt-0.5 line-clamp-2 text-xs text-foreground">
-                    {r.replacement_text}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    className={buttonClass("outline", "inline-flex items-center gap-1 px-2.5 py-1 text-xs")}
-                    onClick={() => {
-                      const url = mediaUrl(r.audio_url.replace(/^\/media\//, ""));
-                      void playVoicePreview(url);
-                    }}
-                  >
-                    <Volume2 className="h-3.5 w-3.5" />
-                    Play
-                  </button>
-                  <Link
-                    href={`/upload-match?episode=${encodeURIComponent(r.episode_id)}`}
-                    className={buttonClass("primary", "px-2.5 py-1 text-xs")}
-                    onClick={() => setActiveProjectId(project.id)}
-                  >
-                    Open workspace
-                  </Link>
-                  <Link
-                    href={`/replace-lines?episode=${encodeURIComponent(r.episode_id)}&segment=${encodeURIComponent(r.segment_id)}`}
-                    className={buttonClass("secondary", "px-2.5 py-1 text-xs")}
-                    onClick={() => setActiveProjectId(project.id)}
-                  >
-                    Advanced
-                  </Link>
-                </div>
-              </li>
+          {/* Stat strip */}
+          <div className="grid grid-cols-4 gap-4 mb-12">
+            {[
+              { k: "Episodes", v: String(episodes.length), sub: `${videoEpisodes} video${audioEpisodes > 0 ? ` \u00B7 ${audioEpisodes} audio` : ""}` },
+              { k: "Characters", v: String(charCount), sub: `${voiced} with voice attached` },
+              { k: "Lines", v: String(transcriptLineTotal), sub: `${linesWithAudio} generated` },
+              { k: "Saved clips", v: String(clipCount), sub: `${replacementCount} line take${replacementCount !== 1 ? "s" : ""}` },
+            ].map((s) => (
+              <div key={s.k} className="bg-surface border border-border rounded-xl p-5 hover:border-border-strong transition-colors">
+                <div className="label-section">{s.k}</div>
+                <div className="text-[36px] font-bold tracking-tight num mt-2 leading-none">{s.v}</div>
+                <div className="text-[12px] text-foreground-subtle num mt-2.5">{s.sub}</div>
+              </div>
             ))}
-          </ul>
-        )}
-        {replacements.length > recentReplacements.length ? (
-          <p className="mt-2 text-xs text-muted">
-            Showing {recentReplacements.length} most recent. Open Replace Lines to browse the full list.
-          </p>
-        ) : null}
-      </Panel>
-
-      <Panel>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-text">Imports & media</h2>
-            <p className="mt-1 text-sm text-muted">
-              Each upload is an episode with transcript, cast, and frames. Open the import workspace to continue editing where you left off.
-            </p>
           </div>
-          <span className="text-xs text-muted">{episodes.length} file{episodes.length === 1 ? "" : "s"}</span>
-        </div>
-        {episodes.length === 0 ? (
-          <p className="mt-4 text-sm text-muted">
-            No imports yet. Use{" "}
-            <Link
-              href="/upload-match"
-              className="font-medium text-accent hover:underline"
-              onClick={() => setActiveProjectId(project.id)}
-            >
-              Import from Video
-            </Link>{" "}
-            to upload a file and build a transcript.
-          </p>
-        ) : (
-          <ul className="mt-4 space-y-3">
-            {sortedEpisodes.map((ep) => {
-              const thumb = ep.thumbnail_paths?.[0];
-              const rosterForEp = characters.filter((c) => c.source_episode_id === ep.id).length;
-              const displayTitle =
-                ep.title?.trim() ||
-                (ep.source_video_path ? ep.source_video_path.split(/[/\\]/).pop() : "") ||
-                ep.id.slice(0, 8);
-              return (
-                <li
-                  key={ep.id}
-                  className="flex flex-wrap items-stretch gap-4 rounded-xl bg-white/[0.02] p-3 ring-1 ring-white/[0.08]"
-                >
-                  <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-white/[0.04] ring-1 ring-white/[0.08]">
-                    {thumb ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img
-                        src={mediaUrl(thumb)}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-muted">
-                        <Clapperboard className="h-8 w-8 opacity-40" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-text">{displayTitle}</p>
-                    <p className="mt-1 text-xs text-muted">
-                      {ep.segment_count} transcript lines
-                      {ep.duration_sec != null ? ` · ${Math.round(ep.duration_sec)}s` : ""}
-                      {rosterForEp > 0 ? ` · ${rosterForEp} roster link${rosterForEp === 1 ? "" : "s"}` : ""}
-                    </p>
-                    <p className="mt-0.5 text-[10px] text-muted">
-                      Updated {formatUpdated(ep.updated_at)}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-col justify-center gap-2 sm:flex-row sm:items-center">
-                    <Badge tone="accent">{ep.status}</Badge>
-                    <Link
-                      href={`/upload-match?episode=${encodeURIComponent(ep.id)}`}
-                      className={buttonClass("primary", "inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs")}
-                      onClick={() => setActiveProjectId(project.id)}
-                    >
-                      <Clapperboard className="h-3.5 w-3.5" />
-                      Open workspace
-                    </Link>
-                    <Link
-                      href={`/replace-lines?episode=${encodeURIComponent(ep.id)}`}
-                      className={buttonClass("secondary", "px-3 py-2 text-xs")}
-                      onClick={() => setActiveProjectId(project.id)}
-                    >
-                      Replace Lines
-                    </Link>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="!px-2.5 !py-2 !text-xs text-red-600 dark:text-red-400"
-                      onClick={() => void removeEpisodeImport(ep)}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Panel>
 
+          {/* Two-column grid */}
+          <div className="grid grid-cols-[1fr_360px] gap-8">
+            {/* Episodes */}
+            <section>
+              <div className="flex items-end justify-between mb-5">
+                <div>
+                  <h2 className="text-[20px] font-bold tracking-tight">Imported episodes</h2>
+                  <p className="text-[13px] text-foreground-muted mt-0.5">Continue where you left off, or start a new import.</p>
+                </div>
+                {episodes.length > 4 && (
+                  <Link href="/upload-match" className="text-[12.5px] font-semibold text-foreground-muted hover:text-foreground flex items-center gap-1.5">
+                    View all <ArrowRight className="size-3.5" />
+                  </Link>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                {sortedEpisodes.slice(0, 4).map((ep) => {
+                  const isAudio = ep.media_type === "audio";
+                  const genLines = replacements.filter((r) => r.episode_id === ep.id && r.generated_audio_path).length;
+                  const totalLines = ep.segment_count ?? 0;
+                  const pct = totalLines > 0 ? (genLines / totalLines) * 100 : 0;
+                  const isComplete = totalLines > 0 && genLines >= totalLines;
+                  const thumbUrl = !isAudio && ep.thumbnail_paths?.length ? mediaUrl(ep.thumbnail_paths[0]!) : null;
+
+                  return (
+                    <Link
+                      key={ep.id}
+                      href={`/upload-match?episode=${encodeURIComponent(ep.id)}`}
+                      className="group bg-surface border border-border rounded-xl overflow-hidden hover:border-border-strong hover:shadow-sm transition-all"
+                    >
+                      <div className={`relative aspect-[16/8] overflow-hidden ${isAudio ? "bg-gradient-to-br from-canvas via-surface-sunken to-canvas" : "bg-canvas"}`}>
+                        {thumbUrl ? (
+                          <img src={thumbUrl} alt={ep.title || ""} className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <div className="flex items-end gap-[3px] h-12">
+                              {[14,22,9,28,18,32,12,26,8,20,30,16,24,10,22].map((h, i) => (
+                                <span key={i} className="w-[3px] rounded-full bg-foreground-muted/40" style={{ height: `${h}px` }} />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-md bg-foreground/85 text-surface text-[10.5px] font-bold backdrop-blur-sm">
+                          {isAudio ? <Mic2 className="size-3" /> : <Video className="size-3" />}
+                          {isAudio ? "AUDIO" : "VIDEO"}
+                        </div>
+                        {totalLines > 0 && (
+                          <div className="absolute top-3 right-3">
+                            <span className={`text-[10.5px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${isComplete ? "bg-success-soft text-success" : "bg-accent-soft text-accent"}`}>
+                              {isComplete ? "Complete" : "In progress"}
+                            </span>
+                          </div>
+                        )}
+                        {ep.duration_sec != null && ep.duration_sec > 0 && (
+                          <div className="absolute bottom-3 right-3 num text-[11px] font-bold text-surface bg-foreground/80 px-1.5 py-0.5 rounded">
+                            {`${Math.floor(ep.duration_sec / 60)}:${String(Math.floor(ep.duration_sec % 60)).padStart(2, "0")}`}
+                          </div>
+                        )}
+                      </div>
+                      <div className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <h3 className="font-bold text-[15px] tracking-tight truncate">{ep.title || "Untitled"}</h3>
+                          <span role="button" tabIndex={0} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmRemoveEp(ep); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); setConfirmRemoveEp(ep); } }} className="text-foreground-subtle hover:text-foreground -mr-1 -mt-1 p-1 cursor-pointer">
+                            <MoreHorizontal className="size-4" />
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-3 text-[11.5px] text-foreground-subtle num">
+                          <span>{genLines}/{totalLines} lines</span>
+                          <span>&middot;</span>
+                          <span className="flex items-center gap-1"><Clock className="size-3" /> {formatUpdated(ep.updated_at)}</span>
+                        </div>
+                        {totalLines > 0 && (
+                          <div className="mt-2.5 h-1 rounded-full bg-canvas overflow-hidden">
+                            <div className={`h-full ${isComplete ? "bg-success" : "bg-accent"}`} style={{ width: `${pct}%` }} />
+                          </div>
+                        )}
+                      </div>
+                    </Link>
+                  );
+                })}
+
+                {/* New import card */}
+                <Link href="/upload-match" className="group bg-canvas border-2 border-dashed border-border-strong rounded-xl p-6 flex flex-col items-center justify-center gap-3 text-foreground-muted hover:border-accent hover:text-accent hover:bg-accent-soft/30 transition-all min-h-[220px]">
+                  <div className="size-12 rounded-full bg-surface border border-border flex items-center justify-center group-hover:border-accent">
+                    <Plus className="size-5" />
+                  </div>
+                  <div className="text-center">
+                    <div className="font-bold text-[14px]">Import video or audio</div>
+                    <div className="text-[12px] mt-1 text-foreground-subtle">Drop a file to start a new episode</div>
+                  </div>
+                </Link>
+              </div>
+            </section>
+
+            {/* Right rail */}
+            <aside className="flex flex-col gap-8">
+              {/* Characters & voices */}
+              <section>
+                <div className="flex items-end justify-between mb-4">
+                  <h2 className="text-[16px] font-bold tracking-tight">Characters & voices</h2>
+                  <Link href="/voice-studio" className="text-[12px] font-semibold text-accent hover:text-accent-hover">Open voice library</Link>
+                </div>
+                <div className="bg-surface border border-border rounded-xl divide-y divide-border-subtle">
+                  {characters.length === 0 ? (
+                    <div className="p-4 text-[13px] text-foreground-muted">No characters yet. Import media or add one manually.</div>
+                  ) : characters.map((c, i) => {
+                    const color = charColors[i % charColors.length];
+                    const initials = c.name.split(" ").map(n => n[0]).slice(0, 2).join("").toUpperCase();
+                    return (
+                      <div key={c.id} className="p-3.5 flex items-center gap-3">
+                        <div className={`size-9 rounded-full flex items-center justify-center text-[12px] font-bold ${color}`}>{initials}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[13.5px] font-semibold truncate">{c.name}</div>
+                          <div className="text-[11px] text-foreground-subtle num">{replacements.filter(r => r.character_id === c.id).length} lines</div>
+                        </div>
+                        {c.default_voice_id ? (
+                          <div className="flex items-center gap-1 text-[11px] font-semibold text-success">
+                            <CheckCircle2 className="size-3.5" /> {c.voice_display_name || "Voice"}
+                          </div>
+                        ) : (
+                          <Link href="/voice-studio" className="text-[11px] font-semibold text-warning-foreground bg-warning-soft border border-warning-border px-2 py-1 rounded-md hover:bg-warning-soft/70 flex items-center gap-1">
+                            <AlertCircle className="size-3" /> Attach
+                          </Link>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {/* Recent clips */}
+              {recentReplacements.length > 0 && (
+                <section>
+                  <div className="flex items-end justify-between mb-4">
+                    <h2 className="text-[16px] font-bold tracking-tight">Recent clips</h2>
+                    <a href={api.projectClipsZipUrl(project.id)} download className="text-[12px] font-semibold text-foreground-muted hover:text-foreground flex items-center gap-1">
+                      <Download className="size-3.5" /> Export all
+                    </a>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    {recentReplacements.map((r) => (
+                      <div key={r.replacement_id} className="h-12 px-2.5 rounded-lg border border-border bg-surface hover:border-border-strong transition-colors flex items-center gap-3">
+                        {r.audio_url ? (
+                          <button onClick={() => { const url = mediaUrl(r.audio_url!.replace(/^\/media\//, "")); playVoicePreview(url); }} className="size-7 rounded-full bg-canvas border border-border flex items-center justify-center hover:border-foreground-muted">
+                            <Play className="size-3 fill-foreground text-foreground ml-0.5" />
+                          </button>
+                        ) : (
+                          <div className="size-7 rounded-full bg-canvas border border-border flex items-center justify-center">
+                            <Clock className="size-3 text-foreground-subtle" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[12.5px] font-semibold truncate">{r.replacement_text?.slice(0, 40) || "Line"}{r.replacement_text && r.replacement_text.length > 40 ? "..." : ""}</div>
+                          <div className="text-[10.5px] text-foreground-subtle num">{r.character_id?.slice(0, 8)} &middot; {formatUpdated(r.updated_at)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Next step callout */}
+              {needsVoiceChar && (
+                <section className="rounded-xl border border-accent/20 bg-accent-soft/40 p-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Sparkles className="size-4 text-accent" />
+                    <span className="text-[12px] font-bold text-accent uppercase tracking-wider">Next step</span>
+                  </div>
+                  <div className="text-[13.5px] font-semibold text-foreground leading-snug">
+                    {needsVoiceChar.name} still needs a voice.
+                  </div>
+                  <p className="text-[12px] text-foreground-muted mt-1.5 leading-relaxed">
+                    Once attached, pending lines can be generated in a single batch.
+                  </p>
+                  <Link href="/voice-studio" className="mt-3 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-accent hover:text-accent-hover">
+                    Open voice library <ArrowRight className="size-3.5" />
+                  </Link>
+                </section>
+              )}
+            </aside>
+          </div>
+        </div>
+      </main>
+
+      {/* Modals */}
       <ConfirmModal
         open={!!confirmRemoveEp}
-        title="Remove import"
+        title="Remove episode?"
         confirmLabel="Remove"
         danger
-        onConfirm={() => void executeRemoveEpisodeImport()}
+        onConfirm={executeRemoveEpisodeImport}
         onCancel={() => setConfirmRemoveEp(null)}
       >
-        <p>
-          Remove &ldquo;{confirmRemoveEp?.title}&rdquo; from the project? Its
-          transcript and detected cast data will be deleted from this machine.
-        </p>
+        This will remove &ldquo;{confirmRemoveEp?.title || "this episode"}&rdquo; and all its data from this project.
       </ConfirmModal>
-
       <ConfirmModal
         open={confirmDeleteProject}
-        title="Delete project"
-        confirmLabel="Delete"
+        title="Delete project?"
+        confirmLabel="Delete project"
         danger
-        busy={deleting}
-        onConfirm={() => void executeRemoveProject()}
+        onConfirm={executeRemoveProject}
         onCancel={() => setConfirmDeleteProject(false)}
       >
-        <p>
-          Delete this project and all of its characters, episodes, and metadata
-          on this machine?
-        </p>
+        This cannot be undone. All episodes, characters, and clips will be permanently deleted.
       </ConfirmModal>
-    </div>
+    </>
   );
 }

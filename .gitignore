@@ -13,3 +13,5 @@ apps/api/storage/
 _uvicorn_test_*.txt
 ref-character-showcase/
 openapi-live*.json
+lovable-ref/
+.idea/

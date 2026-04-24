@@ -19,6 +19,7 @@ import type {
   UploadCreateResponse,
   VoiceCatalogResponse,
   ReplacementDto,
+  UserVoiceDto,
   VoiceClipDto,
 } from "./types";
 
@@ -680,4 +681,80 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ preset: "review_prores" }),
     }),
+
+  // ── User voices ─────────────────────────────────────────
+
+  listUserVoices: () => requestJson<UserVoiceDto[]>("/user-voices"),
+
+  uploadUserVoice: async (
+    file: File,
+    name: string,
+    rightsType: string,
+    rightsNote: string,
+  ): Promise<UserVoiceDto> => {
+    const url = `${getPublicApiBaseUrl()}/user-voices/upload`;
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("name", name);
+    fd.append("rights_type", rightsType);
+    fd.append("rights_note", rightsNote);
+    const res = await fetch(url, { method: "POST", body: fd });
+    const text = await res.text();
+    if (!res.ok) throw new ApiError(`API ${res.status}`, res.status, text);
+    return JSON.parse(text) as UserVoiceDto;
+  },
+
+  recordUserVoice: async (
+    blob: Blob,
+    name: string,
+    rightsType: string,
+    rightsNote: string,
+  ): Promise<UserVoiceDto> => {
+    const url = `${getPublicApiBaseUrl()}/user-voices/from-recording`;
+    const fd = new FormData();
+    fd.append("file", blob, "recording.webm");
+    fd.append("name", name);
+    fd.append("rights_type", rightsType);
+    fd.append("rights_note", rightsNote);
+    const res = await fetch(url, { method: "POST", body: fd });
+    const text = await res.text();
+    if (!res.ok) throw new ApiError(`API ${res.status}`, res.status, text);
+    return JSON.parse(text) as UserVoiceDto;
+  },
+
+  deleteUserVoice: async (voiceId: string): Promise<void> => {
+    const url = `${getPublicApiBaseUrl()}/user-voices/${encodeURIComponent(voiceId)}`;
+    const res = await fetch(url, { method: "DELETE" });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new ApiError(`API ${res.status}`, res.status, text);
+    }
+  },
+
+  // ── Multi-take ──────────────────────────────────────────
+
+  generateTakes: (
+    episodeId: string,
+    segmentId: string,
+    body: {
+      character_id: string;
+      replacement_text: string;
+      delivery_preset?: string;
+      take_count?: number;
+    },
+  ) =>
+    requestJson<ReplacementDto[]>(
+      `/episodes/${episodeId}/segments/${encodeURIComponent(segmentId)}/generate-takes`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
+  setActiveTake: (episodeId: string, replacementId: string) =>
+    requestJson<ReplacementDto>(
+      `/episodes/${episodeId}/replacements/${encodeURIComponent(replacementId)}/set-active`,
+      { method: "POST" },
+    ),
 };

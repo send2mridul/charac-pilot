@@ -21,6 +21,8 @@ export type EpisodeDto = {
   duration_sec?: number | null;
   /** Episode spoken / transcript language (e.g. hi, en). */
   transcript_language?: string | null;
+  /** 'video' | 'audio' */
+  media_type?: string;
 };
 
 export type CharacterDto = {
@@ -257,4 +259,31 @@ export type ReplacementDto = {
   fallback_used: boolean;
   created_at: string;
   updated_at: string;
+  take_number?: number;
+  is_active_take?: number;
+  delivery_preset?: string;
 };
+
+export type UserVoiceDto = {
+  id: string;
+  name: string;
+  elevenlabs_voice_id: string | null;
+  source_type: "recorded" | "uploaded";
+  rights_type: string;
+  preview_url: string | null;
+  created_at: string;
+};
+
+export const DELIVERY_PRESETS = [
+  "neutral",
+  "warm",
+  "calm",
+  "sad",
+  "angry",
+  "excited",
+  "whisper",
+  "playful",
+  "dramatic",
+] as const;
+
+export type DeliveryPreset = (typeof DELIVERY_PRESETS)[number];

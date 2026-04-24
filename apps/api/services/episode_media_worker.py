@@ -183,6 +183,38 @@ def _ffmpeg_extract_wav(
     raise RuntimeError(f"Audio extract failed: {err}")
 
 
+def _ffmpeg_normalize_audio(
+    audio_in: Path,
+    wav_out: Path,
+    ffmpeg_exe: str,
+) -> None:
+    """Normalize an audio file (mp3, m4a, etc.) to 44.1kHz stereo PCM WAV."""
+    r = subprocess.run(
+        [
+            ffmpeg_exe,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(audio_in),
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            str(wav_out),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout or "").strip() or "ffmpeg audio normalize failed"
+        raise RuntimeError(f"Audio normalization failed: {err}")
+
+
 def _ffmpeg_thumbnail(
     video: Path,
     timestamp_sec: float,
@@ -247,13 +279,16 @@ def _run_episode_media_pipeline(
         ffprobe_exe,
     )
     if not source_path.is_file():
-        raise RuntimeError("Source video missing after upload")
+        raise RuntimeError("Source media missing after upload")
+
+    ep_row = store.get_episode(episode_id)
+    is_audio_only = (ep_row.media_type == "audio") if ep_row else False
 
     store.update_job(
         job_id,
         status="running",
         progress=0.08,
-        message="Reading your video…",
+        message="Reading your audio…" if is_audio_only else "Reading your video…",
     )
 
     t_extract0 = time.perf_counter()
@@ -270,31 +305,39 @@ def _run_episode_media_pipeline(
 
     wav_path = source_path.parent / "audio.wav"
     store.update_job(job_id, progress=0.22, message="Extracting audio (WAV)…")
-    _ffmpeg_extract_wav(source_path, wav_path, ffmpeg_exe, ffprobe_exe)
+    if is_audio_only:
+        _ffmpeg_normalize_audio(source_path, wav_path, ffmpeg_exe)
+    else:
+        _ffmpeg_extract_wav(source_path, wav_path, ffmpeg_exe, ffprobe_exe)
     audio_rel = to_rel_storage_path(wav_path)
     store.update_episode(episode_id, extracted_audio_rel=audio_rel)
     job_timing_add_phase(job_id, "extract", time.perf_counter() - t_extract0)
     timer.mark("audio_extract_done")
     _enforce_deadline("after_audio_extract")
 
-    store.update_job(job_id, progress=0.45, message="Saving preview frames…")
-    t_th0 = time.perf_counter()
     thumb_rels: list[str] = []
-    if duration and duration > 0:
-        for i in range(_THUMB_COUNT):
-            t = (i + 0.5) * duration / _THUMB_COUNT
-            out = source_path.parent / f"thumb_{i + 1:02d}.jpg"
-            _ffmpeg_thumbnail(source_path, t, out, ffmpeg_exe)
-            thumb_rels.append(to_rel_storage_path(out))
+    if is_audio_only:
+        store.update_job(job_id, progress=0.45, message="Audio-only import — skipping frames.")
+        store.update_episode(episode_id, thumbnail_rels=[])
+        timer.mark("thumbnails_skipped")
     else:
-        for i in range(_THUMB_COUNT):
-            out = source_path.parent / f"thumb_{i + 1:02d}.jpg"
-            _ffmpeg_thumbnail(source_path, float(i), out, ffmpeg_exe)
-            thumb_rels.append(to_rel_storage_path(out))
+        store.update_job(job_id, progress=0.45, message="Saving preview frames…")
+        t_th0 = time.perf_counter()
+        if duration and duration > 0:
+            for i in range(_THUMB_COUNT):
+                t = (i + 0.5) * duration / _THUMB_COUNT
+                out = source_path.parent / f"thumb_{i + 1:02d}.jpg"
+                _ffmpeg_thumbnail(source_path, t, out, ffmpeg_exe)
+                thumb_rels.append(to_rel_storage_path(out))
+        else:
+            for i in range(_THUMB_COUNT):
+                out = source_path.parent / f"thumb_{i + 1:02d}.jpg"
+                _ffmpeg_thumbnail(source_path, float(i), out, ffmpeg_exe)
+                thumb_rels.append(to_rel_storage_path(out))
 
-    store.update_episode(episode_id, thumbnail_rels=thumb_rels)
-    job_timing_add_phase(job_id, "thumbnails", time.perf_counter() - t_th0)
-    timer.mark("thumbnails_done")
+        store.update_episode(episode_id, thumbnail_rels=thumb_rels)
+        job_timing_add_phase(job_id, "thumbnails", time.perf_counter() - t_th0)
+        timer.mark("thumbnails_done")
     _enforce_deadline("after_thumbnails")
 
     wav_abs = (STORAGE_ROOT / audio_rel).resolve()
@@ -318,7 +361,15 @@ def _run_episode_media_pipeline(
     )
     remote_attempted = False
 
-    if not azure_vi_config.azure_video_indexer_configured():
+    if is_audio_only:
+        fallback_reason = (
+            "Audio-only import — using on-device transcription."
+        )
+        logger.info(
+            "episode_media job_id=%s audio_only=true skip_remote=true",
+            job_id,
+        )
+    elif not azure_vi_config.azure_video_indexer_configured():
         fallback_reason = (
             "AI video analysis is not configured on this machine; "
             "using on-device speech and transcript instead."

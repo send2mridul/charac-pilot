@@ -35,6 +35,7 @@ class EpisodeRecord:
     thumbnail_rels: list[str] = field(default_factory=list)
     duration_sec: float | None = None
     transcript_language: str | None = None
+    media_type: str = "video"
 
 
 @dataclass
@@ -81,6 +82,22 @@ class ReplacementRecord:
     fallback_used: bool
     created_at: str
     updated_at: str
+    take_number: int = 1
+    is_active_take: int = 1
+    delivery_preset: str = "neutral"
+
+
+@dataclass
+class UserVoiceRecord:
+    id: str
+    name: str
+    elevenlabs_voice_id: str | None
+    source_type: str
+    sample_audio_path: str | None
+    rights_type: str
+    rights_note: str = ""
+    preview_audio_path: str | None = None
+    created_at: str = field(default_factory=_now_iso)
 
 
 @dataclass

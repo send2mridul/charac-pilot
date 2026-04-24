@@ -9,7 +9,7 @@ from db.store import store
 from schemas.character import CharacterOut, CreateCharacterFromGroupBody
 from schemas.episode import EpisodeExportBody
 from schemas.job import JobOut
-from schemas.replacement import PatchReplacementBody, ReplaceSegmentBody, ReplacementOut
+from schemas.replacement import GenerateTakesBody, PatchReplacementBody, ReplaceSegmentBody, ReplacementOut
 from schemas.speaker_group import SpeakerGroupMergeBody, SpeakerGroupOut, SpeakerGroupRenameBody
 from schemas.transcript import PatchTranscriptSegmentBody, TranscriptOut, TranscriptSegmentOut
 from services import character_service, episode_service, episode_transcript_service, job_service
@@ -385,6 +385,50 @@ def delete_episode_replacement(episode_id: str, replacement_id: str):
         replacement_service.delete_replacement(eid, rid)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.post(
+    "/{episode_id}/segments/{segment_id}/generate-takes",
+    response_model=list[ReplacementOut],
+)
+def generate_takes(episode_id: str, segment_id: str, body: GenerateTakesBody):
+    """Generate N takes for a segment with a delivery preset."""
+    eid = _episode_id(episode_id)
+    sid = segment_id.strip()
+    log.info(
+        "POST /episodes/%s/segments/%s/generate-takes preset=%s count=%d",
+        eid, sid, body.delivery_preset, body.take_count,
+    )
+    episode_service.ensure_uploaded_episode_in_memory(eid)
+    try:
+        from services.replacement_service import create_take
+        results: list[ReplacementOut] = []
+        for i in range(body.take_count):
+            out = create_take(
+                episode_id=eid,
+                segment_id=sid,
+                character_id=body.character_id,
+                replacement_text=body.replacement_text,
+                delivery_preset=body.delivery_preset,
+                is_first=(i == 0),
+            )
+            results.append(out)
+        return results
+    except ValueError as e:
+        _replacement_http_error(e)
+
+
+@router.post("/{episode_id}/replacements/{replacement_id}/set-active", response_model=ReplacementOut)
+def set_active_take(episode_id: str, replacement_id: str):
+    """Set a take as the active one for its segment+character."""
+    eid = _episode_id(episode_id)
+    rid = replacement_id.strip()
+    log.info("POST /episodes/%s/replacements/%s/set-active", eid, rid)
+    rec = store.set_active_take(eid, rid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Replacement not found")
+    from services.replacement_service import _to_out
+    return _to_out(rec)
 
 
 @router.post("/{episode_id}/export", response_model=JobOut)

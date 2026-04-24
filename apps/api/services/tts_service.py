@@ -74,6 +74,7 @@ def _generate_elevenlabs(
     out_path: Path,
     *,
     language_code: str | None = None,
+    voice_settings_override: dict | None = None,
 ) -> int:
     """Call ElevenLabs TTS API; returns duration_ms. Raises on failure."""
     import urllib.request
@@ -87,18 +88,19 @@ def _generate_elevenlabs(
     vid = _resolve_elevenlabs_voice_id(voice_id)
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}"
     model_id = os.environ.get("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2"
-    # `style` is not applied: prepending it to `text` was read aloud. No non-spoken
-    # free-text control is available on this path; see product/UI for line generation.
     _ = style
+    vs: dict = {
+        "stability": 0.5,
+        "similarity_boost": 0.75,
+        "style": 0.0,
+        "use_speaker_boost": True,
+    }
+    if voice_settings_override:
+        vs.update(voice_settings_override)
     body: dict = {
         "text": (text or "").strip(),
         "model_id": model_id,
-        "voice_settings": {
-            "stability": 0.5,
-            "similarity_boost": 0.75,
-            "style": 0.0,
-            "use_speaker_boost": True,
-        },
+        "voice_settings": vs,
     }
     if language_code:
         body["language_code"] = language_code
@@ -185,6 +187,7 @@ def synthesize_line_to_file(
     out_base_no_ext: Path,
     *,
     language_code: str | None = None,
+    voice_settings_override: dict | None = None,
 ) -> tuple[int, str, bool, Path]:
     """Write TTS to disk. Returns (duration_ms, provider, fallback_used, final_path)."""
     key = _elevenlabs_key()
@@ -199,6 +202,7 @@ def synthesize_line_to_file(
                 style,
                 out_mp3,
                 language_code=language_code,
+                voice_settings_override=voice_settings_override,
             )
             log.info(
                 "synthesize_line_to_file elevenlabs path=%s dur_ms=%s",

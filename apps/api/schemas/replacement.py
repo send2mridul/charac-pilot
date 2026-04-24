@@ -20,6 +20,9 @@ class ReplacementOut(BaseModel):
     fallback_used: bool
     created_at: str
     updated_at: str
+    take_number: int = 1
+    is_active_take: int = 1
+    delivery_preset: str = "neutral"
 
     @field_validator("provider_used", mode="before")
     @classmethod
@@ -55,3 +58,10 @@ class PatchReplacementBody(BaseModel):
     replacement_text: str | None = None
     tone_style: str | None = None  # Accepted for API compat but ignored; not applied to TTS.
     regenerate_audio: bool = False
+
+
+class GenerateTakesBody(BaseModel):
+    character_id: str = Field(..., min_length=1)
+    replacement_text: str = Field(..., min_length=1)
+    delivery_preset: str = "neutral"
+    take_count: int = Field(default=3, ge=1, le=5)
