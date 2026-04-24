@@ -2,7 +2,8 @@
 
 The frontend authenticates via NextAuth (Google OAuth) and then calls
 GET /api/auth/api-token, which issues a short-lived HS256 JWT signed
-with API_AUTH_SECRET.  The Python backend verifies the signature and
+with API_AUTH_SECRET (separate from AUTH_SECRET used by NextAuth).
+The Python backend verifies the signature and
 derives user identity from the verified payload -- never from a
 plain spoofable header.
 
@@ -22,9 +23,9 @@ log = logging.getLogger("characpilot.auth")
 
 
 def _get_api_secret() -> str:
-    secret = os.environ.get("API_AUTH_SECRET") or os.environ.get("AUTH_SECRET", "")
+    secret = os.environ.get("API_AUTH_SECRET", "")
     if not secret:
-        log.warning("Neither API_AUTH_SECRET nor AUTH_SECRET is set; JWT verification will fail")
+        log.warning("API_AUTH_SECRET is not set; JWT verification will fail")
     return secret
 
 

@@ -2,8 +2,8 @@ import { auth } from "@/auth";
 import { SignJWT } from "jose";
 
 function getSecret() {
-  const s = process.env.API_AUTH_SECRET || process.env.AUTH_SECRET;
-  if (!s) throw new Error("API_AUTH_SECRET / AUTH_SECRET not set");
+  const s = process.env.API_AUTH_SECRET;
+  if (!s) throw new Error("API_AUTH_SECRET is not set");
   return new TextEncoder().encode(s);
 }
 
