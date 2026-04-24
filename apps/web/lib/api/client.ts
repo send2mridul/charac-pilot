@@ -182,8 +182,8 @@ export const api = {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", url);
       xhr.responseType = "json";
-      if (_currentUserEmail) {
-        xhr.setRequestHeader("X-User-Email", _currentUserEmail);
+      if (_currentAuthToken) {
+        xhr.setRequestHeader("Authorization", `Bearer ${_currentAuthToken}`);
       }
 
       xhr.upload.onprogress = (ev) => {
