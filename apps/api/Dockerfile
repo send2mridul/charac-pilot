@@ -16,6 +16,9 @@ RUN mkdir -p /data/uploads /data/replacements /data/voice_design /data/avatars /
 
 ENV CASTWEAVE_STORAGE_PATH=/data
 ENV PYTHONUNBUFFERED=1
+ENV WHISPER_MODEL_SIZE=tiny
+ENV WHISPER_MODEL_SIZE_EN=tiny
+ENV WHISPER_MODEL_SIZE_HI=small
 
 EXPOSE 8000
 

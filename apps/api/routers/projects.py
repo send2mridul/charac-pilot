@@ -1,5 +1,6 @@
 import io
 import logging
+import os
 import time
 import zipfile
 from pathlib import Path
@@ -118,12 +119,22 @@ def list_episodes(project_id: str):
     return episode_service.list_episodes(project_id)
 
 
+_MAX_UPLOAD_BYTES = int(os.environ.get("CASTWEAVE_MAX_UPLOAD_MB", "500")) * 1024 * 1024
+
+
 @router.post("/{project_id}/episodes/upload", response_model=EpisodeCreateResult)
 async def upload_episode(project_id: str, file: UploadFile = File(...)):
     if not project_service.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
+
+    if file.size and file.size > _MAX_UPLOAD_BYTES:
+        limit_mb = _MAX_UPLOAD_BYTES // (1024 * 1024)
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({file.size // (1024*1024)} MB). Maximum is {limit_mb} MB.",
+        )
 
     orig = Path(file.filename)
     suffix = orig.suffix.lower()
@@ -157,13 +168,25 @@ async def upload_episode(project_id: str, file: UploadFile = File(...)):
     )
 
     t_disk0 = time.perf_counter()
+    bytes_written = 0
     try:
         with dest.open("wb") as buffer:
             while True:
                 chunk = await file.read(1024 * 1024)
                 if not chunk:
                     break
+                bytes_written += len(chunk)
+                if bytes_written > _MAX_UPLOAD_BYTES:
+                    buffer.close()
+                    dest.unlink(missing_ok=True)
+                    limit_mb = _MAX_UPLOAD_BYTES // (1024 * 1024)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds {limit_mb} MB limit.",
+                    )
                 buffer.write(chunk)
+    except HTTPException:
+        raise
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Could not save upload: {e}") from e
     disk_write_sec = time.perf_counter() - t_disk0

@@ -30,14 +30,15 @@ def _load_libs():
 
 
 def _extract_segment_embedding(
-    y, sr: int, start: float, end: float, librosa, np,
+    wav_path: Path, start: float, end: float, librosa, np,
 ) -> "np.ndarray | None":
-    start_sample = int(start * sr)
-    end_sample = int(end * sr)
-    if start_sample >= len(y):
+    dur = end - start
+    if dur < 0.1:
         return None
-    end_sample = min(end_sample, len(y))
-    chunk = y[start_sample:end_sample]
+    try:
+        chunk, sr = librosa.load(str(wav_path), sr=16000, mono=True, offset=start, duration=dur)
+    except Exception:
+        return None
     if len(chunk) < int(0.1 * sr):
         return None
     try:
@@ -78,18 +79,10 @@ def assign_speaker_labels(
             seg.speaker_label = "UNKNOWN"
         return segments
 
-    try:
-        y, sr = librosa.load(str(wav_path), sr=16000, mono=True)
-    except Exception as e:
-        logger.warning("diarize: could not load WAV: %s", e)
-        for seg in segments:
-            seg.speaker_label = "UNKNOWN"
-        return segments
-
     embeddings = []
     valid_indices: list[int] = []
     for i, seg in enumerate(segments):
-        emb = _extract_segment_embedding(y, sr, seg.start_time, seg.end_time, librosa, np)
+        emb = _extract_segment_embedding(wav_path, seg.start_time, seg.end_time, librosa, np)
         if emb is not None:
             embeddings.append(emb)
             valid_indices.append(i)
