@@ -13,6 +13,18 @@ const VALID_FIELDS = [
   "voice_uploads",
 ] as const;
 
+async function withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, 80 * (i + 1)));
+    }
+  }
+  throw new Error("unreachable");
+}
+
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -30,7 +42,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    await incrementUsage(user.id, field, amount ?? 1);
+    await withRetry(() => incrementUsage(user.id, field, amount ?? 1));
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("Usage track error:", err);

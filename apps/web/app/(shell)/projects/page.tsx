@@ -163,11 +163,11 @@ export default function ProjectsPage() {
       }).catch(() => {});
 
       setActiveProjectId(p.id);
-      await refresh();
       setModalOpen(false);
       setNewName("");
       setNewDesc("");
       router.push(`/projects/${p.id}`);
+      void refresh();
     } catch (e) {
       setCreateError(
         e instanceof ApiError ? e.message : "Could not create project",
@@ -208,7 +208,7 @@ export default function ProjectsPage() {
             <span className="h-1.5 w-1.5 rounded-full bg-primary" />
             {projects.length} project · {activeCount} active
           </span>
-          <h1 className="mt-4 font-display text-5xl font-semibold leading-[1.05] tracking-tight text-balance text-foreground md:text-6xl">
+          <h1 className="mt-4 font-display text-3xl font-semibold leading-[1.05] tracking-tight text-balance text-foreground sm:text-4xl md:text-5xl">
             Projects
           </h1>
           <p className="mt-3 max-w-md text-[15px] leading-relaxed text-muted-foreground">
@@ -342,9 +342,9 @@ export default function ProjectsPage() {
               return (
                 <article
                   key={p.id}
-                  className="group relative overflow-hidden rounded-2xl border border-border bg-card shadow-soft transition-all hover:-translate-y-1 hover:border-border-strong hover:shadow-lifted"
+                  className="group relative rounded-2xl border border-border bg-card shadow-soft transition-all hover:-translate-y-1 hover:border-border-strong hover:shadow-lifted"
                 >
-                  <div className={`h-2 w-full bg-gradient-to-r ${accentBar[accent]}`} />
+                  <div className={`h-2 w-full rounded-t-2xl bg-gradient-to-r ${accentBar[accent]}`} />
                   <div className="p-6">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3">

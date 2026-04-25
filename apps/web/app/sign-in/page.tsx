@@ -23,7 +23,7 @@ export default async function SignInPage({
         alt=""
         fill
         priority
-        className="object-cover scale-110 blur-xl brightness-[0.35]"
+        className="object-cover scale-110 blur-md brightness-[0.4]"
         sizes="100vw"
       />
       <div className="absolute inset-0 bg-gradient-to-br from-black/40 via-black/20 to-black/50" />

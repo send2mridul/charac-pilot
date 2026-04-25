@@ -3,6 +3,7 @@ import logging
 import shutil
 import uuid
 import zipfile
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse

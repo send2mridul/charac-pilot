@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useState } from "react";
 import { Check, ArrowRight, Sparkles } from "lucide-react";
-import { PLAN_LIST, formatPrice, formatStorage, isPro } from "@/lib/billing/plans";
+import { PLAN_LIST, formatStorage } from "@/lib/billing/plans";
 
 export default function PricingPage() {
   const { data: session } = useSession();
@@ -26,10 +26,11 @@ export default function PricingPage() {
       if (data.url) {
         window.location.href = data.url;
       } else {
-        alert(data.error || "Failed to start checkout");
+        const msg = data.error || "Failed to start checkout";
+        alert(msg.includes("not configured") ? "Billing is being set up. Please try again shortly." : msg);
       }
     } catch {
-      alert("Billing service unavailable");
+      alert("Billing service unavailable. Please try again later.");
     } finally {
       setLoading(null);
     }
@@ -107,7 +108,7 @@ export default function PricingPage() {
               {plan.id === "free" ? (
                 <Link
                   href={session ? "/projects" : "/sign-in"}
-                  className="h-11 rounded-lg border border-[var(--border,#e5e5e5)] text-sm font-bold flex items-center justify-center hover:bg-[var(--canvas,#fafaf9)] transition-colors"
+                  className="h-11 w-full rounded-lg border border-neutral-200 text-sm font-bold flex items-center justify-center hover:bg-neutral-50 transition-colors"
                 >
                   {session ? "Go to dashboard" : "Get started free"}
                 </Link>
@@ -115,10 +116,10 @@ export default function PricingPage() {
                 <button
                   onClick={() => handleCheckout(plan.id)}
                   disabled={loading !== null}
-                  className={`h-11 rounded-lg text-sm font-bold flex items-center justify-center transition-colors disabled:opacity-50 ${
+                  className={`h-11 w-full rounded-lg text-sm font-bold flex items-center justify-center transition-colors disabled:opacity-50 ${
                     plan.highlighted
-                      ? "bg-[var(--accent,#6366f1)] text-white hover:bg-[var(--accent-hover,#4f46e5)]"
-                      : "bg-[var(--foreground,#171717)] text-white hover:bg-[var(--foreground,#171717)]/90"
+                      ? "bg-indigo-600 text-white hover:bg-indigo-700"
+                      : "bg-neutral-900 text-white hover:bg-neutral-800"
                   }`}
                 >
                   {loading === plan.id ? "Redirecting..." : `Upgrade to ${plan.name}`}
