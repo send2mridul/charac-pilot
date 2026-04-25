@@ -139,11 +139,29 @@ export default function ProjectsPage() {
     setCreating(true);
     setCreateError(null);
     try {
+      const qr = await fetch("/api/billing/check-quota", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ field: "projects_count" }),
+      }).then((r) => r.json()).catch(() => ({ allowed: true }));
+      if (!qr.allowed) {
+        setCreateError(`Project limit reached (${qr.used}/${qr.limit}). Upgrade your plan for more projects.`);
+        setCreating(false);
+        return;
+      }
+
       const p = await api.createProject({
         name: newName.trim(),
         lead: "You",
         description: newDesc.trim(),
       });
+
+      fetch("/api/billing/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ field: "projects_count" }),
+      }).catch(() => {});
+
       setActiveProjectId(p.id);
       await refresh();
       setModalOpen(false);

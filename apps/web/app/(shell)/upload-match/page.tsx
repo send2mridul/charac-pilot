@@ -431,6 +431,17 @@ function UploadMatchContent() {
 
   async function startUpload() {
     if (!activeProjectId || !file || busy) return;
+
+    const qr = await fetch("/api/billing/check-quota", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field: "imports" }),
+    }).then((r) => r.json()).catch(() => ({ allowed: true }));
+    if (!qr.allowed) {
+      setError(`Import limit reached (${qr.used}/${qr.limit}). Upgrade your plan for more imports.`);
+      return;
+    }
+
     uploadSessionRef.current += 1;
     const sessionId = uploadSessionRef.current;
     if (storageKey) {
@@ -458,6 +469,13 @@ function UploadMatchContent() {
         file,
         (r) => setUploadRatio(r),
       );
+
+      fetch("/api/billing/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ field: "imports" }),
+      }).catch(() => {});
+
       setPhase("processing");
       await pollJob(res.job_id, Date.now(), sessionId);
     } catch (e) {
@@ -1611,19 +1629,10 @@ function UploadMatchContent() {
             <Spinner className="h-4 w-4 border-t-warning" />
             <div className="min-w-0 flex-1">
               <p className="text-[13px] font-semibold text-warning-foreground">
-                {phase === "uploading" ? "Uploading new video..." : job?.message || `${PIPELINE_STEPS[pipelineActiveIndex] ?? "Processing"}...`}
+                {phase === "uploading" ? "Uploading new file..." : job?.message || `${PIPELINE_STEPS[pipelineActiveIndex] ?? "Processing"}...`}
               </p>
               <p className="text-[11px] text-warning-foreground/70">A new import is being processed. The current workspace stays available below.</p>
             </div>
-          </div>
-          <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-warning-border">
-            {phase === "uploading" ? (
-              <div className="h-full rounded-full bg-warning transition-[width] duration-300" style={{ width: `${Math.round(Math.min(1, Math.max(0, uploadRatio)) * 100)}%` }} />
-            ) : typeof job?.progress === "number" ? (
-              <div className="h-full rounded-full bg-warning transition-[width] duration-500" style={{ width: `${Math.round(Math.min(1, Math.max(0, job.progress)) * 100)}%` }} />
-            ) : (
-              <div className="relative h-full w-full"><div className="motion-safe:animate-pulse absolute inset-y-0 left-0 w-2/5 rounded-full bg-gradient-to-r from-warning/25 via-warning/80 to-warning/25 [animation-duration:1.3s]" /></div>
-            )}
           </div>
         </div>
       )}
@@ -1683,21 +1692,33 @@ function UploadMatchContent() {
                   {busy ? (<><Spinner className="h-4 w-4 border-t-white" />{phase === "uploading" ? "Uploading..." : "Processing..."}</>) : (<><Wand2 className="h-4 w-4" />Upload and process</>)}
                 </button>
               </div>
-              {(phase === "uploading" || phase === "processing") && (
+              {(phase === "uploading" || phase === "processing") && (() => {
+                const uploadPct = Math.min(1, Math.max(0, uploadRatio));
+                const procPct = typeof job?.progress === "number" ? Math.min(1, Math.max(0, job.progress)) : 0;
+                const unified = phase === "uploading" ? uploadPct * 0.4 : 0.4 + procPct * 0.6;
+                const pctStr = `${Math.round(unified * 100)}%`;
+                const showDeterminate = phase === "uploading" || (processingTrust.determinate && typeof job?.progress === "number");
+                return (
                 <div className="mt-5 space-y-3">
                   <div className="flex items-start gap-3">
                     <div className="size-9 rounded-full bg-accent-soft flex items-center justify-center shrink-0"><Spinner className="h-4 w-4 border-t-accent" /></div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-[13px] font-semibold text-foreground">{phase === "uploading" ? "Uploading your video..." : job?.message || `${PIPELINE_STEPS[pipelineActiveIndex] ?? "Working on your import"}...`}</p>
+                      <p className="text-[13px] font-semibold text-foreground">{phase === "uploading" ? "Uploading your file..." : job?.message || `${PIPELINE_STEPS[pipelineActiveIndex] ?? "Working on your import"}...`}</p>
                       <p className="mt-0.5 text-[11.5px] text-foreground-muted">Keep this tab open. Processing time depends on media length.</p>
                       {phase === "processing" && processingTrust.severeStall && <p className="mt-1 text-[11px] text-warning-foreground">No server updates for several minutes. Check API logs or try again.</p>}
                     </div>
+                    {showDeterminate && <span className="shrink-0 text-[12px] font-mono font-semibold text-foreground-muted tabular-nums">{pctStr}</span>}
                   </div>
-                  <div className="h-1 w-full overflow-hidden rounded-full bg-border">
-                    {phase === "uploading" ? (<div className="h-full rounded-full bg-accent transition-[width] duration-300" style={{ width: `${Math.round(Math.min(1, Math.max(0, uploadRatio)) * 100)}%` }} />) : processingTrust.determinate && typeof job?.progress === "number" ? (<div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${Math.round(Math.min(1, Math.max(0, job.progress)) * 100)}%` }} />) : (<div className="relative h-full w-full"><div className="motion-safe:animate-pulse absolute inset-y-0 left-0 w-2/5 rounded-full bg-gradient-to-r from-accent/25 via-accent/80 to-accent/25 [animation-duration:1.3s]" /></div>)}
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+                    {showDeterminate ? (
+                      <div className="h-full rounded-full bg-accent transition-[width] duration-500 ease-out" style={{ width: pctStr }} />
+                    ) : (
+                      <div className="relative h-full w-full"><div className="motion-safe:animate-pulse absolute inset-y-0 left-0 w-2/5 rounded-full bg-gradient-to-r from-accent/25 via-accent/80 to-accent/25 [animation-duration:1.3s]" /></div>
+                    )}
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
           </div>
         </div>

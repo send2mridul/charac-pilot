@@ -31,13 +31,15 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_dodo ON subscriptions(dodo_subscription_id);
 
 CREATE TABLE IF NOT EXISTS usage_counters (
-  user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  period_start   TIMESTAMPTZ NOT NULL,
-  period_end     TIMESTAMPTZ NOT NULL,
-  imports        INTEGER NOT NULL DEFAULT 0,
-  media_seconds  INTEGER NOT NULL DEFAULT 0,
-  line_gens      INTEGER NOT NULL DEFAULT 0,
-  preview_gens   INTEGER NOT NULL DEFAULT 0,
-  voice_uploads  INTEGER NOT NULL DEFAULT 0,
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  period_start    TIMESTAMPTZ NOT NULL,
+  period_end      TIMESTAMPTZ NOT NULL,
+  projects_count  INTEGER NOT NULL DEFAULT 0,
+  imports         INTEGER NOT NULL DEFAULT 0,
+  media_seconds   INTEGER NOT NULL DEFAULT 0,
+  storage_bytes   BIGINT  NOT NULL DEFAULT 0,
+  line_gens       INTEGER NOT NULL DEFAULT 0,
+  preview_gens    INTEGER NOT NULL DEFAULT 0,
+  voice_uploads   INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, period_start)
 );

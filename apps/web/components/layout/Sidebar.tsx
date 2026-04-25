@@ -9,6 +9,8 @@ import {
   Workflow,
   Mic2,
   LogOut,
+  Settings,
+  CreditCard,
 } from "lucide-react";
 import { useHydrated } from "@/lib/useHydrated";
 import { SidebarSkeleton } from "@/components/layout/SidebarSkeleton";
@@ -101,9 +103,25 @@ export function Sidebar() {
                 <div className="text-[11px] text-foreground-muted truncate">{user.email}</div>
               </div>
             )}
+            <Link
+              href="/account"
+              onClick={() => setMenuOpen(false)}
+              className="w-full text-left px-3 py-2 text-[12.5px] font-medium text-foreground hover:bg-canvas flex items-center gap-2 transition-colors"
+            >
+              <Settings className="size-3.5" />
+              Account & billing
+            </Link>
+            <Link
+              href="/pricing"
+              onClick={() => setMenuOpen(false)}
+              className="w-full text-left px-3 py-2 text-[12.5px] font-medium text-foreground hover:bg-canvas flex items-center gap-2 transition-colors"
+            >
+              <CreditCard className="size-3.5" />
+              Pricing
+            </Link>
             <button
               onClick={() => void signOut({ callbackUrl: "/sign-in" })}
-              className="w-full text-left px-3 py-2 text-[12.5px] font-medium text-foreground hover:bg-canvas flex items-center gap-2 transition-colors"
+              className="w-full text-left px-3 py-2 text-[12.5px] font-medium text-foreground hover:bg-canvas flex items-center gap-2 transition-colors border-t border-border"
             >
               <LogOut className="size-3.5" />
               Sign out

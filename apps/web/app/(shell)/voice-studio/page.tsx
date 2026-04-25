@@ -487,6 +487,7 @@ function VoiceStudioContent() {
       if (directInputMode === "multi_line") setDirectLinesInput("");
       else setSampleText("");
       toast("Clips saved to this character");
+      void trackUsage("line_gens", lines.length);
     } catch (e) {
       setPreviewError(
         e instanceof ApiError ? e.message : "Direct clip generation failed",
@@ -576,6 +577,7 @@ function VoiceStudioContent() {
         }, 120);
         setTimeout(() => setFreshClipIds(new Set()), 2600);
       }
+      void trackUsage("line_gens", lines.length);
     } catch (e) {
       setPreviewError(
         e instanceof ApiError ? e.message : "Prompt clip generation failed",
@@ -666,8 +668,7 @@ function VoiceStudioContent() {
   const allVoices = voiceHub?.voices ?? [];
   const projectVoiceIds = new Set(characters.filter((c) => c.default_voice_id).map((c) => c.default_voice_id!));
   const projectVoices = allVoices.filter((v) => projectVoiceIds.has(v.voice_id));
-  const createdVoices = allVoices.filter((v) => !projectVoiceIds.has(v.voice_id) && (v.category === "cloned" || v.category === "generated"));
-  const catalogVoices = allVoices.filter((v) => !projectVoiceIds.has(v.voice_id) && v.category !== "cloned" && v.category !== "generated");
+  const catalogVoices = allVoices.filter((v) => !projectVoiceIds.has(v.voice_id));
 
   const remixEligible =
     !!selected?.default_voice_id &&
@@ -678,6 +679,16 @@ function VoiceStudioContent() {
     if (!id || id === activeProjectId) return;
     setActiveProjectId(id);
     router.replace("/voice-studio");
+  }
+
+  async function trackUsage(field: string, amount = 1) {
+    try {
+      await fetch("/api/billing/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ field, amount }),
+      });
+    } catch { /* non-blocking */ }
   }
 
   async function handleDesignGenerate() {
@@ -694,6 +705,7 @@ function VoiceStudioContent() {
       });
       setDesignResult(res);
       if (res.candidates[0]) setDesignPickGid(res.candidates[0].generated_voice_id);
+      void trackUsage("preview_gens");
     } catch (e) {
       setDesignErr(
         e instanceof ApiError ? e.message : "Voice design request failed",
@@ -721,6 +733,7 @@ function VoiceStudioContent() {
       );
       setSaveSuccess(true);
       toast("Designed voice saved");
+      void trackUsage("voice_uploads");
     } catch (e) {
       setDesignErr(
         e instanceof ApiError ? e.message : "Could not save designed voice",
@@ -744,6 +757,7 @@ function VoiceStudioContent() {
       });
       setRemixResult(res);
       if (res.candidates[0]) setRemixPickGid(res.candidates[0].generated_voice_id);
+      void trackUsage("preview_gens");
     } catch (e) {
       setRemixErr(
         e instanceof ApiError ? e.message : "Voice remix request failed",
@@ -777,6 +791,7 @@ function VoiceStudioContent() {
       );
       setSaveSuccess(true);
       toast("Voice updated");
+      void trackUsage("voice_uploads");
     } catch (e) {
       setRemixErr(
         e instanceof ApiError ? e.message : "Could not save remixed voice",
@@ -842,7 +857,7 @@ function VoiceStudioContent() {
       <div className="h-12 shrink-0 bg-canvas border-b border-border px-10 flex items-center gap-1">
         {([
           { id: "catalog" as const, label: "Catalog", count: catalogVoices.length },
-          { id: "saved" as const, label: "My voices", count: userVoices.length + createdVoices.length },
+          { id: "saved" as const, label: "My voices", count: userVoices.length },
           { id: "project" as const, label: "Project voices", count: characters.length },
         ]).map((t) => (
           <button
@@ -1003,7 +1018,7 @@ function VoiceStudioContent() {
                       <Waveform bars={28} className="opacity-70" />
                       {uv.preview_url && (
                         <button
-                          onClick={() => playVoicePreview(uv.preview_url!)}
+                          onClick={() => playVoicePreview(audioSrcFromApiPath(uv.preview_url!))}
                           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-12 rounded-full bg-foreground text-surface flex items-center justify-center shadow-md hover:scale-105 transition-transform"
                         >
                           <Play className="size-5 fill-current ml-0.5" />
@@ -1068,59 +1083,6 @@ function VoiceStudioContent() {
                         >
                           <Trash2 className="size-4" />
                         </button>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-
-                {createdVoices.map((v) => (
-                  <article key={v.voice_id} className="bg-surface border border-border rounded-xl overflow-hidden hover:border-border-strong hover:shadow-sm transition-all flex flex-col">
-                    <div className={`h-24 bg-gradient-to-br ${voiceSwatch(v.display_name)} relative px-4 flex items-end pb-3`}>
-                      <Waveform bars={28} className="opacity-70" />
-                      <button
-                        onClick={() => void previewVoiceRow(v.voice_id)}
-                        disabled={rowPreviewBusyId !== null}
-                        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-12 rounded-full bg-foreground text-surface flex items-center justify-center shadow-md hover:scale-105 transition-transform disabled:opacity-60"
-                      >
-                        {rowPreviewBusyId === v.voice_id ? <Spinner className="h-5 w-5 border-t-surface" /> : <Play className="size-5 fill-current ml-0.5" />}
-                      </button>
-                    </div>
-                    <div className="p-4 flex flex-col gap-3 flex-1">
-                      <div>
-                        <h3 className="font-bold text-[15px] tracking-tight">{v.display_name}</h3>
-                        {v.description && <p className="text-[12.5px] text-foreground-muted mt-0.5 leading-snug line-clamp-2">{v.description}</p>}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {v.category && <span className="text-[10.5px] font-semibold text-foreground-muted bg-canvas border border-border px-1.5 py-0.5 rounded capitalize">{v.category}</span>}
-                      </div>
-                      <div className="relative mt-auto pt-1">
-                        {characters.length > 0 ? (
-                          <>
-                            <button
-                              onClick={() => setAttachDropdownId(attachDropdownId === v.voice_id ? null : v.voice_id)}
-                              className="w-full h-9 rounded-md text-[12.5px] font-bold bg-foreground text-surface hover:bg-foreground/90 flex items-center justify-center gap-1.5"
-                            >
-                              Attach to character
-                            </button>
-                            {attachDropdownId === v.voice_id && (
-                              <div className="absolute left-0 right-0 bottom-full mb-1 bg-surface border border-border rounded-lg shadow-md z-20 py-1 max-h-48 overflow-y-auto">
-                                {characters.map((c) => (
-                                  <button
-                                    key={c.id}
-                                    type="button"
-                                    className="w-full text-left px-3 py-2 text-[13px] hover:bg-canvas truncate"
-                                    onClick={() => {
-                                      setAttachDropdownId(null);
-                                      void handleAttachVoiceToCharacter(c.id, v.voice_id, v.display_name, v.category === "cloned" ? "recorded" : "designed");
-                                    }}
-                                  >
-                                    {c.name}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        ) : null}
                       </div>
                     </div>
                   </article>
@@ -1362,7 +1324,7 @@ function VoiceStudioContent() {
                                     <div className="text-[10px] text-foreground-muted capitalize">{uv.source_type}</div>
                                   </div>
                                   {uv.preview_url && (
-                                    <button type="button" className="shrink-0 rounded-md p-1 text-foreground-muted hover:text-accent" onClick={() => playVoicePreview(uv.preview_url!)}>
+                                    <button type="button" className="shrink-0 rounded-md p-1 text-foreground-muted hover:text-accent" onClick={() => playVoicePreview(audioSrcFromApiPath(uv.preview_url!))}>
                                       <Play className="h-3.5 w-3.5" />
                                     </button>
                                   )}
@@ -1418,28 +1380,6 @@ function VoiceStudioContent() {
                                               {charName && <Badge tone="default">{charName}</Badge>}
                                               {active && <Badge tone="accent">Selected</Badge>}
                                             </span>
-                                          </div>
-                                          {v.description && <p className="line-clamp-1 text-[11px] text-foreground-muted">{v.description}</p>}
-                                        </button>
-                                        <button type="button" disabled={!selected?.id || rowPreviewBusyId !== null} className="flex w-11 shrink-0 items-center justify-center border-l border-border text-foreground-muted hover:bg-canvas/50 hover:text-foreground disabled:opacity-40" onClick={(e) => { e.preventDefault(); void previewVoiceRow(v.voice_id); }}>
-                                          {rowPreviewBusyId === v.voice_id ? <Spinner className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
-                                        </button>
-                                      </div>
-                                    );
-                                  })}
-                                </>
-                              )}
-                              {createdVoices.length > 0 && (
-                                <>
-                                  <div className="sticky top-0 z-10 border-b border-border bg-surface/95 px-3 py-1.5 label-eyebrow text-success backdrop-blur">My created voices</div>
-                                  {createdVoices.map((v) => {
-                                    const active = chosenVoiceId === v.voice_id;
-                                    return (
-                                      <div key={v.voice_id} className={`flex w-full items-stretch border-b border-border-subtle last:border-b-0 ${active ? "bg-accent-soft/20 ring-1 ring-inset ring-accent/30" : ""}`}>
-                                        <button type="button" className="min-w-0 flex-1 px-3 py-2.5 text-left text-sm hover:bg-canvas/50" onClick={() => setChosenVoiceId(v.voice_id)}>
-                                          <div className="flex items-center justify-between gap-2">
-                                            <span className="font-medium text-foreground">{v.display_name}</span>
-                                            {active && <Badge tone="accent">Selected</Badge>}
                                           </div>
                                           {v.description && <p className="line-clamp-1 text-[11px] text-foreground-muted">{v.description}</p>}
                                         </button>
@@ -1709,6 +1649,7 @@ function VoiceStudioContent() {
                     setUserVoices((prev) => [result, ...prev]);
                     setShowAddVoiceModal(false);
                     toast(`Voice "${result.name}" saved`);
+                    void trackUsage("voice_uploads");
                   }}
                 />
               ) : (
@@ -1719,6 +1660,7 @@ function VoiceStudioContent() {
                     setUserVoices((prev) => [result, ...prev]);
                     setShowAddVoiceModal(false);
                     toast(`Voice "${result.name}" saved`);
+                    void trackUsage("voice_uploads");
                   }}
                 />
               )}
