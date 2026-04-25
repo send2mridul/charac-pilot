@@ -391,7 +391,19 @@ function UploadMatchContent() {
         }
         if (st === "done") {
           const newMedia = mediaResultFromJob(j);
-          if (newMedia) setPersistedMedia(newMedia);
+          if (newMedia) {
+            setPersistedMedia(newMedia);
+            if (newMedia.duration_sec && newMedia.duration_sec > 0) {
+              fetch("/api/billing/track", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  field: "media_seconds",
+                  amount: Math.ceil(newMedia.duration_sec),
+                }),
+              }).catch(() => {});
+            }
+          }
           setPhase("done");
           setImportBootKind("none");
           setFile(null);
@@ -442,6 +454,18 @@ function UploadMatchContent() {
       return;
     }
 
+    const storageQr = await fetch("/api/billing/check-quota", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field: "storage_bytes", amount: file.size }),
+    }).then((r) => r.json()).catch(() => ({ allowed: true }));
+    if (!storageQr.allowed) {
+      const usedMB = Math.round((storageQr.used ?? 0) / (1024 * 1024));
+      const limitMB = Math.round((storageQr.limit ?? 0) / (1024 * 1024));
+      setError(`Storage limit reached (${usedMB} MB / ${limitMB} MB). Upgrade your plan for more storage.`);
+      return;
+    }
+
     uploadSessionRef.current += 1;
     const sessionId = uploadSessionRef.current;
     if (storageKey) {
@@ -475,6 +499,14 @@ function UploadMatchContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ field: "imports" }),
       }).catch(() => {});
+
+      if (file.size > 0) {
+        fetch("/api/billing/track", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ field: "storage_bytes", amount: file.size }),
+        }).catch(() => {});
+      }
 
       setPhase("processing");
       await pollJob(res.job_id, Date.now(), sessionId);

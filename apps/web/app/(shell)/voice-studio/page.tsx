@@ -1419,13 +1419,17 @@ function VoiceStudioContent() {
                             </Button>
                             {saveSuccess && <p className="mt-2 text-xs text-success">Saved</p>}
 
-                            <div className="mt-5 border-t border-border pt-4">
-                              <p className="label-eyebrow">Remix</p>
+                            <details className="mt-5 border-t border-border pt-4 group">
+                              <summary className="label-eyebrow cursor-pointer select-none list-none flex items-center gap-1.5 text-foreground-muted hover:text-foreground transition-colors">
+                                <ChevronDown className="h-3.5 w-3.5 -rotate-90 transition-transform group-open:rotate-0" />
+                                Advanced: Remix voice
+                              </summary>
+                              <div className="mt-3">
                               {!remixEligible ? (
-                                <p className="mt-2 text-xs text-warning-foreground">Remix requires a designed or remixed base voice.</p>
+                                <p className="text-xs text-warning-foreground">Remix requires a designed or remixed base voice.</p>
                               ) : (
                                 <>
-                                  <textarea className="mt-2 min-h-[72px] w-full resize-none rounded-md border border-border bg-canvas px-3 py-2 text-sm text-foreground outline-none focus:border-border-strong" placeholder="How should this voice change?" value={remixPrompt} onChange={(e) => setRemixPrompt(e.target.value)} />
+                                  <textarea className="min-h-[72px] w-full resize-none rounded-md border border-border bg-canvas px-3 py-2 text-sm text-foreground outline-none focus:border-border-strong" placeholder="How should this voice change?" value={remixPrompt} onChange={(e) => setRemixPrompt(e.target.value)} />
                                   <textarea className="mt-2 w-full rounded-md border border-border bg-canvas px-3 py-2 text-sm text-foreground outline-none focus:border-border-strong" rows={3} placeholder="Preview line" value={remixPreviewText} onChange={(e) => setRemixPreviewText(e.target.value)} />
                                   <Button className="mt-2 w-full" disabled={remixLoading || !remixPrompt.trim() || !remixEligible} onClick={() => void handleRemixGenerate()}>
                                     {remixLoading ? <><Spinner className="h-4 w-4" /> Generating...</> : "Generate remix variants"}
@@ -1447,7 +1451,8 @@ function VoiceStudioContent() {
                                   ) : null}
                                 </>
                               )}
-                            </div>
+                              </div>
+                            </details>
                           </div>
                         </div>
                       )}
